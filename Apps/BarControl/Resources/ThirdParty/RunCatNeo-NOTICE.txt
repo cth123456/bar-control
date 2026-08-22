@@ -1,0 +1,10 @@
+RunCat Neo runner frames
+Copyright 2026 Kyome22 (Takuto Nakamura)
+Source: https://github.com/runcat-dev/RunCatNeo
+License: Apache License 2.0 (see RunCatNeo-LICENSE.txt)
+
+Modifications in Bar Control:
+- The original cat, coffee, dog, drop, engine, mochi, Newton cradle, and slime PNG frames are loaded directly by AppKit.
+- Users can select the animation from Bar Control's menu; the selection is stored locally.
+- Frame timing is driven by whole-machine power instead of CPU utilization.
+- The frames are scaled and tinted for the Touch Bar.

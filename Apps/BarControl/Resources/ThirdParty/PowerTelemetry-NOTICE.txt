@@ -1,0 +1,12 @@
+Power telemetry implementation references
+
+This app's IOKit and USB-PD telemetry reader was independently implemented
+after consulting the public source and field interpretations in:
+
+- WhatPort: https://github.com/darrylmorley/whatport (MIT License)
+- macpow: https://github.com/k06a/macpow (MIT License)
+
+No source files from either project are included or linked into this app.
+They are not runtime dependencies. The links are retained as attribution for
+the public technical validation of AppleSmartBattery PowerTelemetryData and
+PowerOutDetails behavior.

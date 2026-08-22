@@ -1,0 +1,19 @@
+{
+  "name": "Codex CLI",
+  "executable": "/usr/bin/env",
+  "arguments": [
+    "codex",
+    "--search",
+    "exec",
+    "--ephemeral",
+    "--sandbox",
+    "read-only",
+    "--skip-git-repo-check",
+    "--color",
+    "never",
+    "-C",
+    "/private/tmp",
+    "-"
+  ],
+  "timeout_seconds": 240
+}

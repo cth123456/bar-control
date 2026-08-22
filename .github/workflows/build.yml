@@ -1,0 +1,19 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check public tree
+        run: ./scripts/check-public-tree.command
+      - name: Build apps
+        run: ./build-all.command
+      - name: Test local voice helpers
+        run: |
+          ./Apps/LocalModelVoice/.build/本地模型.app/Contents/MacOS/LocalModelVoice --touchbar-state-self-test
+          ./Apps/LocalModelVoice/.build/本地模型.app/Contents/MacOS/LocalModelVoice --speech-text-self-test
