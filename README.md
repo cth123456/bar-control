@@ -47,7 +47,7 @@ Bar Control 是一套原生 macOS Touch Bar 工具。主 App 不依赖 BetterTou
 
 ## 安装
 
-需要带实体 Touch Bar 的 MacBook Pro、macOS 13 或更高版本，以及 Xcode Command Line Tools。
+需要带实体 Touch Bar 的 MacBook Pro、macOS 13 或更高版本，以及完整 Xcode。构建脚本会用系统原生 `actool` 生成 macOS 27“App”启动器可识别的图标资源；如果 `xcode-select` 当前指向 Command Line Tools，会自动查找本机已安装的 Xcode。
 
 ```sh
 git clone https://github.com/cth123456/bar-control.git
@@ -89,6 +89,8 @@ defaults write local.codex.SidecarPilot TargetDevice "我的 iPad"
 ```sh
 SIGN_IDENTITY="Apple Development: ..." ./build-all.command
 ```
+
+安装脚本会在覆盖 App 后主动刷新 LaunchServices 登记，避免启动台继续使用旧版本图标。
 
 ## 隐私与兼容性
 

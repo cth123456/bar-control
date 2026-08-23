@@ -14,6 +14,10 @@ sign_identity=${SIGN_IDENTITY:--}
     -o "$app_dir/Contents/MacOS/LocalModelVoice"
 /usr/bin/ditto "$project_dir/Info.plist" "$app_dir/Contents/Info.plist"
 /usr/bin/ditto "$project_dir/Resources/LocalModelVoice.icns" "$app_dir/Contents/Resources/LocalModelVoice.icns"
+"$project_dir/../../scripts/compile-app-icon.command" \
+    "$project_dir/Resources/LocalModelVoice.icns" \
+    "14.0" \
+    "$app_dir/Contents/Resources"
 /usr/bin/codesign --force --deep --sign "$sign_identity" "$app_dir"
 
 echo "$app_dir"

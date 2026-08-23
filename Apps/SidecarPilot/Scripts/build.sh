@@ -13,5 +13,9 @@ swiftc -swift-version 5 -O -framework AppKit \
 cp "$project_dir/Resources/Info.plist" "$app_dir/Contents/Info.plist"
 cp "$project_dir/Resources/connect-sidecar.applescript" "$app_dir/Contents/Resources/connect-sidecar.applescript"
 cp "$project_dir/Resources/SidecarPilot.icns" "$app_dir/Contents/Resources/SidecarPilot.icns"
+"$project_dir/../../scripts/compile-app-icon.command" \
+  "$project_dir/Resources/SidecarPilot.icns" \
+  "13.0" \
+  "$app_dir/Contents/Resources"
 codesign --force --deep --sign "$sign_identity" "$app_dir"
 echo "$app_dir"
