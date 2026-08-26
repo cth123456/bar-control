@@ -1,0 +1,429 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0AB1B40DAB341E4C800FD6E1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D30D53C5925AA8151C8161C7 /* Assets.xcassets */; };
+		250A58615FD30C9AE999D4A7 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4514ED5B1D0957D47EC51CC3 /* ContentView.swift */; };
+		408E8105B90E859275FFCCF4 /* SpeechInputController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCEF78C6A567D5AFD9B2D603 /* SpeechInputController.swift */; };
+		630579F32711FE3CAAAD3326 /* RemoteViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C24481E004B3B666ED5685 /* RemoteViewModel.swift */; };
+		846AF1D85B8C204794080B98 /* MacProvisioningStub.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09FDAAA88AC8079613E64499 /* MacProvisioningStub.swift */; };
+		9F2F9A5C7C15418A8AF48E35 /* BarControlRemoteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6890477A57A4FE5398F8F1F6 /* BarControlRemoteApp.swift */; };
+		B1C95F0B75A8752F3D4E6178 /* CloudKitRemoteClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5273EE820903DD255BAEA989 /* CloudKitRemoteClient.swift */; };
+		F6F670AD450A42C61CD0AF36 /* RemoteControlModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF27F9C8C2DC3195E9D45FD4 /* RemoteControlModels.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		09FDAAA88AC8079613E64499 /* MacProvisioningStub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacProvisioningStub.swift; sourceTree = "<group>"; };
+		4514ED5B1D0957D47EC51CC3 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		5273EE820903DD255BAEA989 /* CloudKitRemoteClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKitRemoteClient.swift; sourceTree = "<group>"; };
+		6890477A57A4FE5398F8F1F6 /* BarControlRemoteApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarControlRemoteApp.swift; sourceTree = "<group>"; };
+		8E438C3AA03DA69EF9C9E72A /* BarControlRemote.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = BarControlRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8F43B37074D628E41CD1F31A /* BarControlCloudProvisioning.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BarControlCloudProvisioning.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AF27F9C8C2DC3195E9D45FD4 /* RemoteControlModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RemoteControlModels.swift; path = ../BarControl/Sources/CodexTouchBarNative/RemoteControlModels.swift; sourceTree = "<group>"; };
+		C5C24481E004B3B666ED5685 /* RemoteViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteViewModel.swift; sourceTree = "<group>"; };
+		D30D53C5925AA8151C8161C7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		DCEF78C6A567D5AFD9B2D603 /* SpeechInputController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechInputController.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		19A8A08F02A97BE11759BF10 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				AF27F9C8C2DC3195E9D45FD4 /* RemoteControlModels.swift */,
+			);
+			name = Shared;
+			sourceTree = "<group>";
+		};
+		288E5672D6DE55036B3E3ABA = {
+			isa = PBXGroup;
+			children = (
+				D30D53C5925AA8151C8161C7 /* Assets.xcassets */,
+				764440C89E493768E7C7AB81 /* Provisioning */,
+				19A8A08F02A97BE11759BF10 /* Shared */,
+				3CE983078862D15966FC054C /* Sources */,
+				614283F38638FD45CD154E12 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		3CE983078862D15966FC054C /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				6890477A57A4FE5398F8F1F6 /* BarControlRemoteApp.swift */,
+				5273EE820903DD255BAEA989 /* CloudKitRemoteClient.swift */,
+				4514ED5B1D0957D47EC51CC3 /* ContentView.swift */,
+				C5C24481E004B3B666ED5685 /* RemoteViewModel.swift */,
+				DCEF78C6A567D5AFD9B2D603 /* SpeechInputController.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		614283F38638FD45CD154E12 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8F43B37074D628E41CD1F31A /* BarControlCloudProvisioning.app */,
+				8E438C3AA03DA69EF9C9E72A /* BarControlRemote.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		764440C89E493768E7C7AB81 /* Provisioning */ = {
+			isa = PBXGroup;
+			children = (
+				09FDAAA88AC8079613E64499 /* MacProvisioningStub.swift */,
+			);
+			path = Provisioning;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		88472250525BD03F57C4BA26 /* BarControlRemote */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA0A948928042FCB6782BC32 /* Build configuration list for PBXNativeTarget "BarControlRemote" */;
+			buildPhases = (
+				ABDA529039AEBA12520086A2 /* Sources */,
+				D33A771132408C3D802D6AB1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BarControlRemote;
+			packageProductDependencies = (
+			);
+			productName = BarControlRemote;
+			productReference = 8E438C3AA03DA69EF9C9E72A /* BarControlRemote.app */;
+			productType = "com.apple.product-type.application";
+		};
+		C4CA28EF12368D405CC87C1C /* BarControlCloudProvisioning */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6D074B958207124AE8B714AA /* Build configuration list for PBXNativeTarget "BarControlCloudProvisioning" */;
+			buildPhases = (
+				E79DDBC812001E334337B2F1 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BarControlCloudProvisioning;
+			packageProductDependencies = (
+			);
+			productName = BarControlCloudProvisioning;
+			productReference = 8F43B37074D628E41CD1F31A /* BarControlCloudProvisioning.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		58647E95D636A03BE6D792BD /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					88472250525BD03F57C4BA26 = {
+						DevelopmentTeam = G4Q5WT6422;
+						ProvisioningStyle = Automatic;
+					};
+					C4CA28EF12368D405CC87C1C = {
+						DevelopmentTeam = G4Q5WT6422;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 94C2EFB5C69A31DFF871B260 /* Build configuration list for PBXProject "BarControlRemote" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 288E5672D6DE55036B3E3ABA;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 614283F38638FD45CD154E12 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				88472250525BD03F57C4BA26 /* BarControlRemote */,
+				C4CA28EF12368D405CC87C1C /* BarControlCloudProvisioning */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D33A771132408C3D802D6AB1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0AB1B40DAB341E4C800FD6E1 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		ABDA529039AEBA12520086A2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9F2F9A5C7C15418A8AF48E35 /* BarControlRemoteApp.swift in Sources */,
+				B1C95F0B75A8752F3D4E6178 /* CloudKitRemoteClient.swift in Sources */,
+				250A58615FD30C9AE999D4A7 /* ContentView.swift in Sources */,
+				F6F670AD450A42C61CD0AF36 /* RemoteControlModels.swift in Sources */,
+				630579F32711FE3CAAAD3326 /* RemoteViewModel.swift in Sources */,
+				408E8105B90E859275FFCCF4 /* SpeechInputController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E79DDBC812001E334337B2F1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				846AF1D85B8C204794080B98 /* MacProvisioningStub.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		161BCCF3843E8E42C626682E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = ../BarControl/BarControl.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Provisioning/MacProvisioningInfo.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = local.codex.CodexTouchBarNative;
+				PRODUCT_NAME = "Bar Control Provisioning";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		781EEC2C16CE0FD0D9360856 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_ENTITLEMENTS = BarControlRemote.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cth123456.BarControlRemote;
+				PRODUCT_NAME = BarControlRemote;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		846D47CEB50090AE8207C4E0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_ENTITLEMENTS = BarControlRemote.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cth123456.BarControlRemote;
+				PRODUCT_NAME = BarControlRemote;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		AC5D02E842D57B82A0125E47 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = G4Q5WT6422;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		B267CE9E9177E4A69151EE93 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = ../BarControl/BarControl.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Provisioning/MacProvisioningInfo.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = local.codex.CodexTouchBarNative;
+				PRODUCT_NAME = "Bar Control Provisioning";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		DA85B7B6F72CB09059FFE937 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = G4Q5WT6422;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		6D074B958207124AE8B714AA /* Build configuration list for PBXNativeTarget "BarControlCloudProvisioning" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				161BCCF3843E8E42C626682E /* Debug */,
+				B267CE9E9177E4A69151EE93 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		94C2EFB5C69A31DFF871B260 /* Build configuration list for PBXProject "BarControlRemote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DA85B7B6F72CB09059FFE937 /* Debug */,
+				AC5D02E842D57B82A0125E47 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EA0A948928042FCB6782BC32 /* Build configuration list for PBXNativeTarget "BarControlRemote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				781EEC2C16CE0FD0D9360856 /* Debug */,
+				846D47CEB50090AE8207C4E0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 58647E95D636A03BE6D792BD /* Project object */;
+}

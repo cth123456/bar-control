@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1290" height="681" viewBox="0 0 1290 681">
+  <title>Bar Control Power Flow Expanded 0.16.0</title>
+  <desc>Editable vector baseline copied from the accepted native AppKit geometry.</desc>
+  <defs>
+    <linearGradient id="upperFlow" x1="190" y1="250" x2="554" y2="250" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#dcc66f" stop-opacity=".34"/>
+      <stop offset=".34" stop-color="#c8c28c" stop-opacity=".28"/>
+      <stop offset=".67" stop-color="#a9c3b3" stop-opacity=".22"/>
+      <stop offset=".84" stop-color="#94b2aa" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".10"/>
+    </linearGradient>
+    <linearGradient id="lowerFlow" x1="190" y1="470" x2="554" y2="470" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#dcc66f" stop-opacity=".34"/>
+      <stop offset=".34" stop-color="#c6c19b" stop-opacity=".26"/>
+      <stop offset=".63" stop-color="#afc6c6" stop-opacity=".22"/>
+      <stop offset=".82" stop-color="#a1bed1" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".10"/>
+    </linearGradient>
+    <linearGradient id="outputFlow" x1="812" y1="501" x2="1102" y2="501" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9dbeb6" stop-opacity=".17"/>
+      <stop offset=".48" stop-color="#fff" stop-opacity=".16"/>
+      <stop offset=".76" stop-color="#b8cfd3" stop-opacity=".15"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".10"/>
+    </linearGradient>
+    <linearGradient id="thinFlow" x1="812" y1="501" x2="1096" y2="501" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8ec4a6" stop-opacity=".17"/>
+      <stop offset=".5" stop-color="#fff" stop-opacity=".19"/>
+      <stop offset="1" stop-color="#a9d5bc" stop-opacity=".15"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".26"/>
+      <stop offset=".46" stop-color="#fff" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".055"/>
+    </linearGradient>
+    <linearGradient id="greenCard" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".26"/>
+      <stop offset=".46" stop-color="#fff" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#9bc8a7" stop-opacity=".09"/>
+    </linearGradient>
+    <filter id="glassShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="#000" flood-opacity=".20"/>
+    </filter>
+    <style>
+      .glass { stroke:#fff; stroke-opacity:.34; stroke-width:1.25; filter:url(#glassShadow) }
+      .flow { stroke:#bed2ce; stroke-opacity:.30; stroke-width:1.3; filter:url(#glassShadow) }
+      .label { fill:#262626; font-family:-apple-system,BlinkMacSystemFont,"SF Pro Rounded",sans-serif; font-weight:700; text-anchor:middle }
+      .neutral { stroke:#74777a; fill:none; stroke-width:2.5; stroke-linecap:round; stroke-linejoin:round }
+    </style>
+  </defs>
+
+  <g id="main-flows">
+    <path id="battery-flow" class="flow" fill="url(#upperFlow)" d="M207 93 C290 92 347 73 407 57 C453 45 501 48 539 48 C548 48 554 54 554 63 L554 330 C554 340 549 345 539 347 C451 350 360 365 271 392 L190 392 L190 109 C190 100 197 94 207 93 Z"/>
+    <path id="system-flow" class="flow" fill="url(#lowerFlow)" d="M190 392 L271 392 C360 419 450 437 539 439 C549 439 554 445 554 454 L554 539 C554 548 548 553 539 554 C429 554 324 537 207 509 C197 507 190 501 190 491 Z"/>
+  </g>
+
+  <g id="output-flows">
+    <path id="output-top" class="flow" fill="url(#outputFlow)" d="M812 439 C857 439 886 428 914 409 C960 378 1006 357 1054 349 C1069 346 1084 346 1092 347 C1099 347 1102 352 1102 359 L1102 386 C1102 395 1097 400 1088 400 C1027 400 978 421 929 450 C893 471 858 488 812 488 Z"/>
+    <path id="output-middle" fill="url(#thinFlow)" stroke="#b7d9c5" stroke-opacity=".27" stroke-width="1.6" d="M812 488 L1087 488 C1093 488 1096 492 1096 498 L1096 504 C1096 510 1092 513 1087 513 L812 513 Z"/>
+    <path id="output-bottom" class="flow" fill="url(#outputFlow)" d="M812 514 C858 514 893 530 929 551 C978 580 1027 602 1088 602 C1097 602 1102 608 1102 617 L1102 633 C1102 642 1097 646 1088 646 C1038 645 990 628 947 604 C903 579 861 555 812 555 Z"/>
+  </g>
+
+  <g id="cards" fill="url(#card)">
+    <path id="source-card" class="glass" d="M76 95 L160 95 C169 95 174 101 174 110 L174 493 C174 502 168 508 159 508 L77 508 C50 508 28 488 28 460 L28 146 C28 117 50 95 76 95 Z"/>
+    <path id="battery-card" class="glass" d="M585 49 L666 49 C694 49 716 72 716 101 L716 294 C716 323 694 346 666 346 L585 346 C575 346 570 340 570 331 L570 64 C570 54 575 49 585 49 Z"/>
+    <rect id="laptop-card" class="glass" x="570" y="439" width="146" height="116" rx="16"/>
+    <rect id="hub-card" class="glass" x="733" y="439" width="79" height="116" rx="16"/>
+    <rect id="chip-card" class="glass" x="1112" y="347" width="146" height="53" rx="25"/>
+    <rect id="monitor-card" class="glass" x="1112" y="475" width="146" height="52" rx="24"/>
+    <rect id="more-card" class="glass" fill="url(#greenCard)" x="1113" y="599" width="146" height="51" rx="24"/>
+  </g>
+
+  <g id="labels">
+    <text class="label" x="101" y="347" font-size="39">85 W</text>
+    <text class="label" x="372" y="236" font-size="43">61.2 W</text>
+    <text class="label" x="372" y="490" font-size="43">23.7 W</text>
+    <text class="label" x="912" y="435" font-size="43">10.7 W</text>
+    <text class="label" x="914" y="515" font-size="32">3.83 W</text>
+    <text class="label" x="914" y="591" font-size="40">9.15 W</text>
+  </g>
+
+  <g id="icons">
+    <g id="plug" fill="#3c3c3c" opacity=".78">
+      <rect x="90" y="242" width="8" height="24" rx="4"/>
+      <rect x="107" y="242" width="8" height="24" rx="4"/>
+      <path d="M87 259 H118 V278 C118 288 111 296 102.5 296 C94 296 87 288 87 278 Z"/>
+      <path d="M99 293 H106 V303 C106 310 102 314 97 317 L93 310 C97 308 99 306 99 302 Z"/>
+    </g>
+    <g id="battery" stroke="#9bc8a7" stroke-width="3.5">
+      <rect x="606" y="181" width="67" height="34" rx="9" fill="none"/>
+      <rect x="612" y="187" width="51" height="22" rx="5" fill="#8db895" stroke="#b2d1b9" stroke-width="1.4"/>
+      <path d="M673 192 H676 C679 192 681 194 681 198 C681 202 679 204 676 204 H673 Z" fill="#9bc8a7" stroke="none"/>
+    </g>
+    <g id="laptop" stroke="#83afe5" stroke-width="3.7" fill="none" stroke-linecap="round">
+      <rect x="615" y="475" width="52" height="36" rx="3"/>
+      <path d="M606 516 H676"/>
+    </g>
+    <g id="chip" class="neutral">
+      <rect x="1175" y="362" width="27" height="27" rx="2"/>
+      <rect x="1181" y="368" width="15" height="15" rx="1"/>
+      <path d="M1170 367.5 H1175 M1202 367.5 H1207 M1170 376 H1175 M1202 376 H1207 M1170 384.5 H1175 M1202 384.5 H1207 M1180 357 H1180 M1180 357 V362 M1188.5 357 V362 M1197 357 V362 M1180 389 V394 M1188.5 389 V394 M1197 389 V394"/>
+    </g>
+    <g id="monitor" class="neutral">
+      <rect x="1164.5" y="483" width="41" height="27" rx="2"/>
+      <path d="M1185 510 V516 M1175.5 516 H1194.5"/>
+    </g>
+    <g id="more" fill="#74777a">
+      <circle cx="1173" cy="624.5" r="2.8"/>
+      <circle cx="1186" cy="624.5" r="2.8"/>
+      <circle cx="1199" cy="624.5" r="2.8"/>
+    </g>
+  </g>
+</svg>

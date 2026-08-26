@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -14,6 +15,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -22,9 +24,13 @@ from typing import Any
 
 CODEX_DIR = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
 CC_SWITCH_DB = Path.home() / ".cc-switch" / "cc-switch.db"
+CODEX_AUTH_FILE = CODEX_DIR / "auth.json"
+CC_SWITCH_CODEX_OAUTH_FILE = Path.home() / ".cc-switch" / "codex_oauth_auth.json"
 APP_DIR = Path.home() / "Library" / "Application Support" / "CodexTouchBar"
 CC_SWITCH_USAGE_CACHE = APP_DIR / "cc-switch-usage-cache.json"
 CC_SWITCH_USAGE_CACHE_SECONDS = 30
+AI_ACCOUNT_USAGE_CACHE = APP_DIR / "ai-account-usage-cache.json"
+AI_ACCOUNT_USAGE_CACHE_SECONDS = 60
 STATE_DB = CODEX_DIR / "state_5.sqlite"
 RUNTIME_FILE = APP_DIR / "runtime.json"
 CONFIG_FILE = APP_DIR / "config.json"
@@ -289,6 +295,17 @@ def safe_float(value: Any) -> float | None:
 def extract_provider_usage(response: Any) -> dict[str, Any] | None:
     if not isinstance(response, dict):
         return None
+    balance_infos = response.get("balance_infos")
+    if isinstance(balance_infos, list):
+        first = next((item for item in balance_infos if isinstance(item, dict)), None)
+        if first:
+            remaining = safe_float(first.get("total_balance"))
+            if remaining is not None:
+                return {
+                    "remaining_balance": remaining,
+                    "balance_unit": str(first.get("currency") or "CNY")[:8],
+                    "remote_today_cost": None,
+                }
     quota = response.get("quota") if isinstance(response.get("quota"), dict) else {}
     remaining = safe_float(response.get("remaining"))
     if remaining is None:
@@ -327,8 +344,7 @@ def query_provider_usage(provider: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     base_match = re.search(r'^base_url\s*=\s*["\']([^"\']+)', config, re.MULTILINE)
-    url_match = re.search(r'url\s*:\s*["\']([^"\']+)', code)
-    if not base_match or not url_match:
+    if not base_match:
         return None
     base_url = base_match.group(1).rstrip("/")
     api_key = next(
@@ -349,14 +365,25 @@ def query_provider_usage(provider: dict[str, Any]) -> dict[str, Any] | None:
             value = value.replace(placeholder, replacement)
         return value
 
-    url = substitute(url_match.group(1))
+    if script.get("templateType") == "balance" and "api.deepseek.com" in base_url.lower():
+        url = "https://api.deepseek.com/user/balance"
+        request_code = ""
+        native_balance = True
+    else:
+        url_match = re.search(r'url\s*:\s*["\']([^"\']+)', code)
+        if not url_match:
+            return None
+        url = substitute(url_match.group(1))
+        request_code = code.split("extractor", 1)[0]
+        native_balance = False
     base_parts = urllib.parse.urlparse(base_url)
     url_parts = urllib.parse.urlparse(url)
     if url_parts.scheme != "https" or (url_parts.hostname, url_parts.port) != (base_parts.hostname, base_parts.port):
         return None
 
     headers = {"Accept": "application/json", "User-Agent": "BarControl/1.0"}
-    request_code = code.split("extractor", 1)[0]
+    if native_balance:
+        headers["Authorization"] = f"Bearer {api_key}"
     for name, value in re.findall(r'["\']([^"\']+)["\']\s*:\s*["\']([^"\']*)["\']', request_code):
         if name.lower() not in {"url", "method"}:
             headers[name] = substitute(value)
@@ -374,100 +401,456 @@ def cached_provider_usage(provider: dict[str, Any], now: float) -> dict[str, Any
         return None
     cache = read_json(CC_SWITCH_USAGE_CACHE, {})
     cached = cache.get(provider_id) if isinstance(cache, dict) else None
-    if isinstance(cached, dict) and now - float(cached.get("queried_at") or 0) < CC_SWITCH_USAGE_CACHE_SECONDS:
+    try:
+        metadata = json.loads(provider.get("meta") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    script = metadata.get("usage_script") if isinstance(metadata, dict) else None
+    interval_minutes = safe_float(script.get("autoQueryInterval")) if isinstance(script, dict) else None
+    cache_seconds = max(60, int((interval_minutes or 5) * 60))
+    if isinstance(cached, dict) and now - float(cached.get("queried_at") or 0) < cache_seconds:
         return cached
 
     current = query_provider_usage(provider)
     if current:
+        history = cached.get("history") if isinstance(cached, dict) else []
+        history = history if isinstance(history, list) else []
+        balance = safe_float(current.get("remaining_balance"))
+        last = history[-1] if history and isinstance(history[-1], dict) else {}
+        if balance is not None and (
+            safe_float(last.get("primary")) != balance
+            or now - float(last.get("timestamp") or 0) >= cache_seconds
+        ):
+            history.append({"timestamp": now, "primary": balance, "secondary": None})
+        current["history"] = [
+            point for point in history[-96:]
+            if isinstance(point, dict) and now - float(point.get("timestamp") or 0) <= 7 * 86_400
+        ]
         current["queried_at"] = now
         cache = cache if isinstance(cache, dict) else {}
         cache[provider_id] = current
         write_json(CC_SWITCH_USAGE_CACHE, cache)
         return current
-    if isinstance(cached, dict) and now - float(cached.get("queried_at") or 0) < 300:
+    if isinstance(cached, dict) and now - float(cached.get("queried_at") or 0) < max(600, cache_seconds * 2):
         return cached
     return None
 
 
-def cc_switch_usage(db_path: Path = CC_SWITCH_DB, now: float | None = None) -> list[dict[str, Any]]:
-    if not db_path.exists():
-        return []
-    current = datetime.fromtimestamp(now or time.time()).astimezone()
-    day_start = current.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+def decode_jwt_claims(token: Any) -> dict[str, Any]:
+    if not isinstance(token, str):
+        return {}
+    parts = token.split(".")
+    if len(parts) < 2:
+        return {}
     try:
-        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=0.2)
-        connection.row_factory = sqlite3.Row
-        providers = {
-            row["app_type"]: dict(row)
-            for row in connection.execute(
-                """
-                SELECT id, app_type, name, category, limit_daily_usd, limit_monthly_usd,
-                       settings_config, meta
-                FROM providers
-                WHERE is_current = 1
-                """
-            )
-        }
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        value = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
 
-        def totals(since: float) -> dict[str, dict[str, Any]]:
-            rows = connection.execute(
-                """
-                SELECT app_type, COUNT(*) AS requests,
-                       SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) AS tokens,
-                       SUM(CAST(total_cost_usd AS REAL)) AS cost,
-                       MAX(created_at) AS latest_at
-                FROM proxy_request_logs
-                WHERE created_at >= ?
-                GROUP BY app_type
-                """,
-                (int(since),),
-            ).fetchall()
-            return {row["app_type"]: dict(row) for row in rows}
 
-        today = totals(day_start)
-        month = totals(month_start)
-        connection.close()
-    except sqlite3.Error:
-        return []
-
-    labels = {
-        "claude": "Claude",
-        "codex": "Codex",
-        "gemini": "Gemini",
-        "grokbuild": "Grok",
-        "opencode": "OpenCode",
-        "hermes": "Hermes",
+def live_codex_auth() -> dict[str, Any]:
+    value = read_json(CODEX_AUTH_FILE, {})
+    tokens = value.get("tokens") if isinstance(value, dict) else None
+    if not isinstance(tokens, dict):
+        return {}
+    claims = decode_jwt_claims(tokens.get("id_token"))
+    openai_auth = claims.get("https://api.openai.com/auth")
+    openai_auth = openai_auth if isinstance(openai_auth, dict) else {}
+    account_id = tokens.get("account_id") or claims.get("chatgpt_account_id") or openai_auth.get("chatgpt_account_id")
+    if not isinstance(account_id, str) or not account_id:
+        return {}
+    try:
+        modified_at = CODEX_AUTH_FILE.stat().st_mtime
+    except OSError:
+        modified_at = 0.0
+    return {
+        "account_id": account_id,
+        "email": claims.get("email") if isinstance(claims.get("email"), str) else None,
+        "access_token": tokens.get("access_token") if isinstance(tokens.get("access_token"), str) else None,
+        "modified_at": modified_at,
     }
-    app_types = set(providers)
+
+
+def managed_codex_accounts() -> list[dict[str, Any]]:
+    store = read_json(CC_SWITCH_CODEX_OAUTH_FILE, {})
+    raw_accounts = store.get("accounts") if isinstance(store, dict) else None
+    if not isinstance(raw_accounts, dict):
+        return []
     result = []
-    for app_type in app_types:
-        provider = providers.get(app_type, {})
-        # Built-in "official" providers use the signed-in subscription account.
-        # Historical proxy logs must not keep the UI in API billing mode.
-        if provider.get("category") == "official":
+    for account_id, value in raw_accounts.items():
+        if not isinstance(account_id, str) or not isinstance(value, dict):
             continue
-        daily = today.get(app_type, {})
-        monthly = month.get(app_type, {})
-        remote = cached_provider_usage(provider, now or time.time()) or {}
-        remote_today_cost = safe_float(remote.get("remote_today_cost"))
+        email = value.get("email")
         result.append(
             {
-                "id": app_type,
-                "label": labels.get(app_type, app_type.replace("-", " ").title()),
-                "provider": provider.get("name") or "",
-                "today_cost": round(float(remote_today_cost if remote_today_cost is not None else daily.get("cost") or 0), 6),
-                "month_cost": round(float(monthly.get("cost") or 0), 6),
-                "today_requests": int(daily.get("requests") or 0),
-                "today_tokens": int(daily.get("tokens") or 0),
-                "daily_limit": safe_float(provider.get("limit_daily_usd")),
-                "monthly_limit": safe_float(provider.get("limit_monthly_usd")),
-                "latest_at": float(daily.get("latest_at") or monthly.get("latest_at") or 0),
-                "remaining_balance": safe_float(remote.get("remaining_balance")),
-                "balance_unit": remote.get("balance_unit"),
+                "account_id": account_id,
+                "email": email if isinstance(email, str) else None,
+                "authenticated_at": float(value.get("authenticated_at") or 0),
             }
         )
-    return sorted(result, key=lambda item: (item["latest_at"], item["today_cost"]), reverse=True)
+    return result
+
+
+def normalize_codex_quota_response(response: Any) -> dict[str, Any] | None:
+    rate_limit = response.get("rate_limit") if isinstance(response, dict) else None
+    if not isinstance(rate_limit, dict):
+        return None
+    windows = []
+    for key in ("primary_window", "secondary_window"):
+        window = rate_limit.get(key)
+        if not isinstance(window, dict):
+            continue
+        used = safe_float(window.get("used_percent"))
+        if used is not None:
+            windows.append(max(0.0, min(100.0, 100.0 - used)))
+    if not windows:
+        return None
+    return {
+        "remaining_percent": windows[0],
+        "secondary_remaining_percent": windows[1] if len(windows) > 1 else None,
+    }
+
+
+def normalize_rollout_quota(limits: Any) -> dict[str, Any] | None:
+    if not isinstance(limits, dict):
+        return None
+    windows = []
+    for key in ("primary", "secondary"):
+        window = limits.get(key)
+        used = safe_float(window.get("used_percent")) if isinstance(window, dict) else None
+        if used is not None:
+            windows.append(max(0.0, min(100.0, 100.0 - used)))
+    if not windows:
+        return None
+    return {
+        "remaining_percent": windows[0],
+        "secondary_remaining_percent": windows[1] if len(windows) > 1 else None,
+    }
+
+
+def cached_account_quota(account_id: str) -> dict[str, Any]:
+    cache = read_json(AI_ACCOUNT_USAGE_CACHE, {})
+    accounts = cache.get("accounts") if isinstance(cache, dict) else None
+    value = accounts.get(account_id) if isinstance(accounts, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def record_account_quota(account_id: str, quota: dict[str, Any], now: float) -> dict[str, Any]:
+    cache = read_json(AI_ACCOUNT_USAGE_CACHE, {})
+    cache = cache if isinstance(cache, dict) else {}
+    accounts = cache.get("accounts")
+    accounts = accounts if isinstance(accounts, dict) else {}
+    previous = accounts.get(account_id)
+    previous = previous if isinstance(previous, dict) else {}
+    history = previous.get("history")
+    history = history if isinstance(history, list) else []
+    primary = safe_float(quota.get("remaining_percent"))
+    secondary = safe_float(quota.get("secondary_remaining_percent"))
+    last = history[-1] if history and isinstance(history[-1], dict) else {}
+    if primary is not None and (
+        safe_float(last.get("primary")) != primary
+        or safe_float(last.get("secondary")) != secondary
+        or now - float(last.get("timestamp") or 0) >= 900
+    ):
+        history.append({"timestamp": now, "primary": primary, "secondary": secondary})
+    saved = {
+        "queried_at": now,
+        "remaining_percent": primary,
+        "secondary_remaining_percent": secondary,
+        "history": [
+            point for point in history[-96:]
+            if isinstance(point, dict) and now - float(point.get("timestamp") or 0) <= 7 * 86_400
+        ],
+    }
+    accounts[account_id] = saved
+    cache["accounts"] = accounts
+    write_json(AI_ACCOUNT_USAGE_CACHE, cache)
+    return saved
+
+
+def active_codex_quota(live_auth: dict[str, Any], fallback_limits: Any, now: float) -> dict[str, Any]:
+    account_id = live_auth.get("account_id")
+    if not isinstance(account_id, str):
+        return {}
+    cached = cached_account_quota(account_id)
+    if now - float(cached.get("queried_at") or 0) < AI_ACCOUNT_USAGE_CACHE_SECONDS:
+        return cached
+    token = live_auth.get("access_token")
+    if isinstance(token, str) and token:
+        request = urllib.request.Request(
+            "https://chatgpt.com/backend-api/wham/usage",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "ChatGPT-Account-Id": account_id,
+                "User-Agent": "codex-cli",
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=8) as response:
+                raw = response.read(128 * 1024 + 1)
+            if len(raw) <= 128 * 1024:
+                quota = normalize_codex_quota_response(json.loads(raw))
+                if quota:
+                    return record_account_quota(account_id, quota, now)
+        except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError):
+            pass
+    fallback = normalize_rollout_quota(fallback_limits)
+    return record_account_quota(account_id, fallback, now) if fallback else cached
+
+
+def provider_auth_binding(provider: dict[str, Any]) -> str | None:
+    try:
+        meta = json.loads(provider.get("meta") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    binding = meta.get("authBinding") if isinstance(meta, dict) else None
+    if not isinstance(binding, dict) or binding.get("source") != "managed_account" or binding.get("authProvider") != "codex_oauth":
+        return None
+    account_id = binding.get("accountId")
+    return account_id if isinstance(account_id, str) and account_id else None
+
+
+def usage_account_stats(value: dict[str, Any]) -> tuple[float | None, float | None]:
+    cacheable = int(value.get("input_tokens") or 0) + int(value.get("cache_creation_tokens") or 0) + int(value.get("cache_read_tokens") or 0)
+    cache_hit = 100.0 * int(value.get("cache_read_tokens") or 0) / cacheable if cacheable > 0 else None
+    requests = int(value.get("requests") or 0)
+    success = 100.0 * int(value.get("successes") or 0) / requests if requests > 0 else None
+    return cache_hit, success
+
+
+def account_label(email: Any, account_id: str) -> str:
+    return email if isinstance(email, str) and email else "ChatGPT · " + account_id[-4:]
+
+
+def cc_switch_snapshot(
+    db_path: Path = CC_SWITCH_DB,
+    now: float | None = None,
+    limits: Any = None,
+) -> dict[str, list[dict[str, Any]]]:
+    timestamp = now or time.time()
+    current = datetime.fromtimestamp(timestamp).astimezone()
+    day_start = current.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+    history_start = day_start - 6 * 86_400
+    live_auth = live_codex_auth() if db_path == CC_SWITCH_DB else {}
+    managed_accounts = managed_codex_accounts() if db_path == CC_SWITCH_DB else []
+    active_quota = active_codex_quota(live_auth, limits, timestamp) if live_auth else {}
+
+    providers: list[dict[str, Any]] = []
+    today: dict[tuple[str, str], dict[str, Any]] = {}
+    month: dict[tuple[str, str], dict[str, Any]] = {}
+    stats: dict[tuple[str, str], dict[str, Any]] = {}
+    histories: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    latest_models: dict[tuple[str, str], str] = {}
+    if db_path.exists():
+        try:
+            connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=0.2)
+            connection.row_factory = sqlite3.Row
+            providers = [dict(row) for row in connection.execute(
+                """
+                SELECT id, app_type, name, category, is_current, limit_daily_usd,
+                       limit_monthly_usd, settings_config, meta, sort_index, created_at
+                FROM providers ORDER BY app_type, is_current DESC,
+                     COALESCE(sort_index, 9223372036854775807), created_at, name
+                """
+            )]
+
+            def totals(since: float) -> dict[tuple[str, str], dict[str, Any]]:
+                rows = connection.execute(
+                    """
+                    SELECT app_type, provider_id, COUNT(*) AS requests,
+                           SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) AS tokens,
+                           SUM(CAST(total_cost_usd AS REAL)) AS cost, MAX(created_at) AS latest_at
+                    FROM proxy_request_logs WHERE created_at >= ? GROUP BY app_type, provider_id
+                    """,
+                    (int(since),),
+                ).fetchall()
+                return {(row["app_type"], row["provider_id"]): dict(row) for row in rows}
+
+            today = totals(day_start)
+            month = totals(month_start)
+            stats = {
+                (row["app_type"], row["provider_id"]): dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT app_type, provider_id, COUNT(*) AS requests,
+                           SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS successes,
+                           SUM(input_tokens) AS input_tokens, SUM(cache_read_tokens) AS cache_read_tokens,
+                           SUM(cache_creation_tokens) AS cache_creation_tokens
+                    FROM proxy_request_logs WHERE created_at >= ? GROUP BY app_type, provider_id
+                    """,
+                    (int(month_start),),
+                )
+            }
+            for row in connection.execute(
+                """
+                SELECT app_type, provider_id, strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime') AS day,
+                       COUNT(*) AS requests,
+                       SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) AS tokens,
+                       SUM(CAST(total_cost_usd AS REAL)) AS cost
+                FROM proxy_request_logs WHERE created_at >= ?
+                GROUP BY app_type, provider_id, day ORDER BY day
+                """,
+                (int(history_start),),
+            ):
+                histories.setdefault((row["app_type"], row["provider_id"]), []).append(dict(row))
+            for row in connection.execute(
+                """
+                SELECT logs.app_type, logs.provider_id, logs.model
+                FROM proxy_request_logs AS logs JOIN (
+                    SELECT app_type, provider_id, MAX(created_at) AS latest_at
+                    FROM proxy_request_logs GROUP BY app_type, provider_id
+                ) AS latest ON logs.app_type = latest.app_type
+                    AND logs.provider_id = latest.provider_id AND logs.created_at = latest.latest_at
+                """
+            ):
+                latest_models[(row["app_type"], row["provider_id"])] = row["model"] or ""
+            connection.close()
+        except sqlite3.Error:
+            providers = []
+
+    labels = {
+        "claude": "Claude", "claude-desktop": "Claude Desktop", "codex": "Codex",
+        "gemini": "Gemini", "grokbuild": "Grok", "opencode": "OpenCode",
+        "openclaw": "OpenClaw", "hermes": "Hermes", "pi": "Pi",
+    }
+    visible_apps = {row["app_type"] for row in providers if row.get("is_current")}
+    visible_apps.update(app_type for app_type, _ in month)
+    if managed_accounts or live_auth:
+        visible_apps.add("codex")
+
+    def history_points(key: tuple[str, str]) -> tuple[list[dict[str, Any]], str, str]:
+        rows = histories.get(key, [])
+        use_cost = any(float(row.get("cost") or 0) > 0 for row in rows)
+        points = []
+        for row in rows:
+            try:
+                point_time = datetime.fromisoformat(str(row["day"])).astimezone().timestamp()
+            except (ValueError, TypeError):
+                continue
+            points.append({
+                "timestamp": point_time,
+                "primary": float(row.get("cost") or 0) if use_cost else float(row.get("tokens") or 0),
+                "secondary": None,
+            })
+        return points, "USD" if use_cost else "tokens", "7日费用" if use_cost else "7日 Token"
+
+    bound_providers = {
+        binding: provider for provider in providers
+        if provider.get("app_type") == "codex" and (binding := provider_auth_binding(provider))
+    }
+    managed_ids = {item["account_id"] for item in managed_accounts}
+    if live_auth and live_auth["account_id"] not in managed_ids:
+        managed_accounts.append({
+            "account_id": live_auth["account_id"],
+            "email": live_auth.get("email"),
+            "authenticated_at": float(live_auth.get("modified_at") or 0),
+        })
+
+    accounts = []
+    legacy = []
+    for managed in managed_accounts:
+        account_id = managed["account_id"]
+        is_current = live_auth.get("account_id") == account_id
+        quota = active_quota if is_current and active_quota else cached_account_quota(account_id)
+        aggregate_key = ("codex", "_codex_session")
+        daily = today.get(aggregate_key, {}) if is_current else {}
+        monthly = month.get(aggregate_key, {}) if is_current else {}
+        cache_hit, success = usage_account_stats(stats.get(aggregate_key, {}) if is_current else {})
+        activity_history, chart_unit, chart_title = history_points(aggregate_key) if is_current else ([], "percent", "额度趋势")
+        quota_history = quota.get("history") if isinstance(quota.get("history"), list) else []
+        history = activity_history if len(activity_history) >= 2 else quota_history
+        if history is quota_history:
+            chart_unit, chart_title = "percent", "额度趋势"
+        provider = bound_providers.get(account_id)
+        accounts.append({
+            "key": f"codex:oauth:{account_id}", "client_id": "codex", "client_label": "Codex",
+            "account_label": account_label(managed.get("email"), account_id),
+            "provider_label": (provider or {}).get("name") or "OpenAI Official",
+            "is_current": is_current, "is_official": True, "metric_kind": "subscription",
+            "remaining_balance": None, "balance_unit": None,
+            "remaining_percent": safe_float(quota.get("remaining_percent")),
+            "secondary_remaining_percent": safe_float(quota.get("secondary_remaining_percent")),
+            "today_cost": round(float(daily.get("cost") or 0), 6),
+            "month_cost": round(float(monthly.get("cost") or 0), 6),
+            "today_requests": int(daily.get("requests") or 0), "today_tokens": int(daily.get("tokens") or 0),
+            "cache_hit_percent": cache_hit, "success_percent": success,
+            "model_label": latest_models.get(aggregate_key, "") if is_current else "",
+            "metrics_scope": "Codex 会话总计" if is_current else "账户额度",
+            "chart_title": chart_title, "chart_unit": chart_unit,
+            "latest_at": float(quota.get("queried_at") or managed.get("authenticated_at") or 0),
+            "history": history,
+        })
+
+    for provider in providers:
+        app_type = provider.get("app_type") or ""
+        provider_id = provider.get("id") or ""
+        if app_type not in visible_apps or not provider_id:
+            continue
+        is_official = provider.get("category") == "official"
+        if app_type == "codex" and is_official and live_auth:
+            continue
+        key = (app_type, provider_id)
+        if is_official and not provider.get("is_current") and key not in month:
+            continue
+        daily = today.get(key, {})
+        monthly = month.get(key, {})
+        remote = {} if is_official else (cached_provider_usage(provider, timestamp) or {})
+        remote_today_cost = safe_float(remote.get("remote_today_cost"))
+        today_cost = float(remote_today_cost if remote_today_cost is not None else daily.get("cost") or 0)
+        month_cost = float(monthly.get("cost") or 0)
+        daily_limit = safe_float(provider.get("limit_daily_usd"))
+        monthly_limit = safe_float(provider.get("limit_monthly_usd"))
+        budget = monthly_limit if (daily_limit or 0) <= 0 and (monthly_limit or 0) > 0 else daily_limit
+        spent = month_cost if budget == monthly_limit and budget is not None else today_cost
+        remaining_percent = max(0.0, min(100.0, 100.0 - spent / budget * 100.0)) if budget and budget > 0 else None
+        points = remote.get("history") if isinstance(remote.get("history"), list) else []
+        if points:
+            chart_unit = remote.get("balance_unit") or "USD"
+            chart_title = "余额趋势"
+        else:
+            points, chart_unit, chart_title = history_points(key)
+        cache_hit, success = usage_account_stats(stats.get(key, {}))
+        remaining_balance = safe_float(remote.get("remaining_balance"))
+        client_label = labels.get(app_type, app_type.replace("-", " ").title())
+        account = {
+            "key": f"{app_type}:provider:{provider_id}", "client_id": app_type,
+            "client_label": client_label, "account_label": provider.get("name") or client_label,
+            "provider_label": "官方账户" if is_official else "API",
+            "is_current": bool(provider.get("is_current")), "is_official": is_official,
+            "metric_kind": "subscription" if is_official else ("balance" if remaining_balance is not None else "cost"),
+            "remaining_balance": remaining_balance, "balance_unit": remote.get("balance_unit") or "USD",
+            "remaining_percent": remaining_percent, "secondary_remaining_percent": None,
+            "today_cost": round(today_cost, 6), "month_cost": round(month_cost, 6),
+            "today_requests": int(daily.get("requests") or 0), "today_tokens": int(daily.get("tokens") or 0),
+            "cache_hit_percent": cache_hit, "success_percent": success,
+            "model_label": latest_models.get(key, ""), "metrics_scope": provider.get("name") or client_label,
+            "chart_title": chart_title, "chart_unit": chart_unit,
+            "latest_at": float(remote.get("queried_at") or daily.get("latest_at") or monthly.get("latest_at") or 0),
+            "history": points,
+        }
+        accounts.append(account)
+        if not is_official:
+            legacy.append({
+                "id": app_type, "label": client_label, "provider": provider.get("name") or "",
+                "today_cost": round(today_cost, 6), "month_cost": round(month_cost, 6),
+                "today_requests": int(daily.get("requests") or 0), "today_tokens": int(daily.get("tokens") or 0),
+                "daily_limit": daily_limit, "monthly_limit": monthly_limit,
+                "latest_at": account["latest_at"], "remaining_balance": remaining_balance,
+                "balance_unit": remote.get("balance_unit"),
+            })
+
+    order = {name: index for index, name in enumerate(labels)}
+    accounts.sort(key=lambda item: order.get(item["client_id"], 99))
+    return {"platforms": legacy, "accounts": accounts}
+
+
+def cc_switch_usage(db_path: Path = CC_SWITCH_DB, now: float | None = None) -> list[dict[str, Any]]:
+    return cc_switch_snapshot(db_path=db_path, now=now)["platforms"]
 
 
 def thread_state(thread: dict[str, Any]) -> str:
@@ -525,6 +908,7 @@ def snapshot() -> dict[str, Any]:
         label = f"○ 空闲 {limit_text}"
         state = "idle"
 
+    usage = cc_switch_snapshot(limits=newest_limits[1] if newest_limits else None)
     return {
         "label": label,
         "state": state,
@@ -541,7 +925,8 @@ def snapshot() -> dict[str, Any]:
             for item in active
         ],
         "limits": newest_limits[1] if newest_limits else None,
-        "platforms": cc_switch_usage(),
+        "platforms": usage["platforms"],
+        "accounts": usage["accounts"],
     }
 
 
@@ -560,13 +945,13 @@ def self_test() -> None:
         usage_db = Path(directory) / "cc-switch.db"
         connection = sqlite3.connect(usage_db)
         connection.execute(
-            "CREATE TABLE providers (id TEXT, app_type TEXT, name TEXT, category TEXT, limit_daily_usd TEXT, limit_monthly_usd TEXT, settings_config TEXT, meta TEXT, is_current INTEGER)"
+            "CREATE TABLE providers (id TEXT, app_type TEXT, name TEXT, category TEXT, limit_daily_usd TEXT, limit_monthly_usd TEXT, settings_config TEXT, meta TEXT, is_current INTEGER, sort_index INTEGER, created_at INTEGER)"
         )
         connection.execute(
-            "CREATE TABLE proxy_request_logs (app_type TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_creation_tokens INTEGER, total_cost_usd TEXT, created_at INTEGER)"
+            "CREATE TABLE proxy_request_logs (app_type TEXT, provider_id TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_creation_tokens INTEGER, total_cost_usd TEXT, status_code INTEGER, created_at INTEGER)"
         )
-        connection.execute("INSERT INTO providers VALUES ('api-a', 'claude', 'API A', NULL, '10', '100', '{}', '{}', 1)")
-        connection.execute("INSERT INTO proxy_request_logs VALUES ('claude', 100, 20, 5, 0, '2.5', 1786327200)")
+        connection.execute("INSERT INTO providers VALUES ('api-a', 'claude', 'API A', NULL, '10', '100', '{}', '{}', 1, 0, 1786327000)")
+        connection.execute("INSERT INTO proxy_request_logs VALUES ('claude', 'api-a', 'claude-test', 100, 20, 5, 0, '2.5', 200, 1786327200)")
         connection.commit()
         connection.close()
         usage = cc_switch_usage(usage_db, now=1786330800)
@@ -578,6 +963,11 @@ def self_test() -> None:
             "remaining_balance": 17.03,
             "balance_unit": "USD",
             "remote_today_cost": 3.2,
+        }
+        assert extract_provider_usage({"balance_infos": [{"currency": "CNY", "total_balance": "6.21"}]}) == {
+            "remaining_balance": 6.21,
+            "balance_unit": "CNY",
+            "remote_today_cost": None,
         }
         connection = sqlite3.connect(usage_db)
         connection.execute("UPDATE providers SET category = 'official'")

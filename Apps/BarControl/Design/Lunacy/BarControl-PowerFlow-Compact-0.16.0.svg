@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1290" height="563" viewBox="0 0 1290 563">
+  <title>Bar Control Power Flow Compact 0.16.0</title>
+  <desc>Editable compact-state vector baseline copied from the accepted native AppKit geometry.</desc>
+  <defs>
+    <linearGradient id="upper" x1="225" y1="206" x2="1078" y2="159" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity=".84"/>
+      <stop offset=".52" stop-color="#fff" stop-opacity=".56"/>
+      <stop offset="1" stop-color="#dcefe4" stop-opacity=".34"/>
+    </linearGradient>
+    <linearGradient id="lower" x1="225" y1="405" x2="1078" y2="454" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity=".84"/>
+      <stop offset=".52" stop-color="#fff" stop-opacity=".56"/>
+      <stop offset="1" stop-color="#dce8ff" stop-opacity=".38"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".91"/>
+      <stop offset=".52" stop-color="#fff" stop-opacity=".69"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".55"/>
+    </linearGradient>
+    <linearGradient id="batteryCard" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".91"/>
+      <stop offset=".52" stop-color="#fff" stop-opacity=".69"/>
+      <stop offset="1" stop-color="#e0f0e6" stop-opacity=".10"/>
+    </linearGradient>
+    <linearGradient id="laptopCard" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".91"/>
+      <stop offset=".52" stop-color="#fff" stop-opacity=".69"/>
+      <stop offset="1" stop-color="#e2ebf8" stop-opacity=".11"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000" flood-opacity=".17"/>
+    </filter>
+    <style>
+      .glass { stroke:#fff; stroke-opacity:.80; stroke-width:1.35; filter:url(#shadow) }
+      .label { fill:#252525; font-family:-apple-system,BlinkMacSystemFont,"SF Pro Rounded",sans-serif; text-anchor:middle }
+    </style>
+  </defs>
+
+  <g id="flows">
+    <path id="battery-flow" class="glass" fill="url(#upper)" d="M242 90 C430 88 768 61 1059 40 C1070 40 1078 48 1078 59 L1078 260 C1078 271 1072 277 1061 278 C757 283 507 299 278 325 H225 V107 C225 97 232 91 242 90 Z"/>
+    <path id="system-flow" class="glass" fill="url(#lower)" d="M225 326 H278 C507 350 757 370 1061 375 C1072 375 1078 382 1078 392 L1078 514 C1078 524 1072 531 1061 531 C755 524 500 504 242 484 C232 483 225 477 225 467 Z"/>
+  </g>
+
+  <g id="cards">
+    <path id="source-card" class="glass" fill="url(#card)" d="M107 90 H192 C202 90 208 96 208 106 V468 C208 478 202 484 192 484 H107 C72 484 45 458 45 423 V151 C45 116 72 90 107 90 Z"/>
+    <path id="battery-card" class="glass" fill="url(#batteryCard)" d="M1111 40 H1198 C1234 40 1259 66 1259 102 V217 C1259 253 1234 278 1199 278 H1111 C1101 278 1094 271 1094 261 V57 C1094 47 1101 40 1111 40 Z"/>
+    <path id="laptop-card" class="glass" fill="url(#laptopCard)" d="M1111 375 H1200 C1235 375 1259 400 1259 434 V474 C1259 508 1235 533 1200 533 H1111 C1101 533 1094 526 1094 516 V392 C1094 382 1101 375 1111 375 Z"/>
+  </g>
+
+  <g id="labels">
+    <text class="label" x="127" y="340" font-size="44" font-weight="500">67W</text>
+    <text class="label" x="650" y="201" font-size="48" font-weight="700">41.21 W</text>
+    <text class="label" x="650" y="451" font-size="48" font-weight="700">25.59 W</text>
+  </g>
+
+  <g id="icons">
+    <g id="plug" fill="#252525">
+      <rect x="116" y="222" width="9" height="27" rx="4"/>
+      <rect x="134" y="222" width="9" height="27" rx="4"/>
+      <path d="M112 243 H147 V264 C147 276 139 285 129.5 285 C120 285 112 276 112 264 Z"/>
+      <path d="M126 282 H134 V296 C134 303 130 309 124 313 L119 305 C124 302 126 298 126 293 Z"/>
+    </g>
+    <g id="battery" stroke="#7ec48e" stroke-width="4" fill="none">
+      <rect x="1142" y="140" width="65" height="35" rx="9"/>
+      <rect x="1149" y="147" width="49" height="21" rx="5" fill="#7ec48e" fill-opacity=".30"/>
+      <path d="M1207 150 H1212 C1216 150 1218 153 1218 157 C1218 161 1216 164 1212 164 H1207"/>
+      <path d="M1179 143 L1168 158 H1178 L1174 171 L1188 153 H1178 Z" fill="#7ec48e" stroke="none"/>
+    </g>
+    <g id="laptop" stroke="#6a9fe5" stroke-width="4" fill="none" stroke-linecap="round">
+      <rect x="1148" y="426" width="58" height="39" rx="3"/>
+      <path d="M1138 473 H1216"/>
+    </g>
+  </g>
+</svg>

@@ -1,7 +1,9 @@
 import AppKit
 import Darwin
+import ImageIO
 import QuartzCore
 import ServiceManagement
+import UniformTypeIdentifiers
 
 private struct SidecarStatus: Equatable {
     let state: String
@@ -162,6 +164,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
     private enum Item {
         static let mainContainer = NSTouchBarItem.Identifier("CodexTouchBarNative.mainContainer.v7")
         static let detailContainer = NSTouchBarItem.Identifier("CodexTouchBarNative.detailContainer.v7")
+        static let usageContainer = NSTouchBarItem.Identifier("CodexTouchBarNative.usageContainer.v2")
         static let systemContainer = NSTouchBarItem.Identifier("CodexTouchBarNative.systemContainer.v1")
         static let controlStrip = NSTouchBarItem.Identifier("CodexTouchBarNative.controlStrip")
     }
@@ -173,6 +176,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
 
     private let touchBar = NSTouchBar()
     private let statusClient = CodexStatusClient()
+    private let remoteControl = RemoteControlManager()
     private lazy var touchBarPower = TouchBarPower()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var controlStripItem: NSCustomTouchBarItem?
@@ -184,8 +188,9 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
     private weak var controlStripButton: NSButton?
     private weak var quotaView: QuotaView?
     private weak var sessionView: SessionStripView?
+    private weak var usageDetailView: UsageDetailStripView?
     private weak var systemDetailView: SystemDetailStripView?
-    private weak var powerFlowView: PowerFlowView?
+    private weak var powerFlowView: PowerFlowPanelView?
     private weak var borderMenuItem: NSMenuItem?
     private weak var brightnessMenuItem: NSMenuItem?
     private var runnerMenuItems: [NSMenuItem] = []
@@ -202,6 +207,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
     private var orderPanel: NSPanel?
     private weak var orderStack: NSStackView?
     private var snapshot = CodexSnapshot.loading
+    private var selectedUsageAccountKey: String?
     private var refreshTimer: Timer?
     private var sidecarTimer: Timer?
     private var metricsTimer: Timer?
@@ -238,6 +244,11 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         AppLog.write("menu items=\(statusItem.menu?.items.map(\.title) ?? [])")
         NSApp.touchBar = touchBar
         installControlStripItem()
+        remoteControl.start()
+        if let switchIndex = CommandLine.arguments.firstIndex(of: "--switch-provider"),
+           switchIndex + 1 < CommandLine.arguments.count {
+            remoteControl.switchProvider(id: CommandLine.arguments[switchIndex + 1])
+        }
         refresh()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -280,10 +291,34 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         brightnessTimer = nil
         systemMonitorButton?.stopAnimating()
         powerFlowView?.stopAnimating()
+        remoteControl.stop()
         if let controlStripItem {
             ControlStrip.remove(controlStripItem)
         }
         controlStripItem = nil
+    }
+
+    func runRemoteProtocolSmokeTest() {
+        Task {
+            let passed = await remoteControl.runProtocolSmokeTest()
+            AppLog.write("remote protocol smoke test passed=\(passed)")
+            stop()
+            exit(passed ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    func runProviderContinuityProbe(providerName: String, threadID: String) {
+        Task {
+            let passed = await remoteControl.runProviderContinuityProbe(
+                providerName: providerName,
+                threadID: threadID
+            )
+            AppLog.write(
+                "provider continuity probe provider=\(providerName) thread=\(threadID) passed=\(passed)"
+            )
+            stop()
+            exit(passed ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
     }
 
     func runSmokeTest() {
@@ -361,25 +396,166 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             self.showMain()
             assert(self.touchBar.defaultItemIdentifiers == self.mainIdentifiers)
             assert(self.touchBar.principalItemIdentifier == nil)
-            let flowPreview = PowerFlowView()
+            let flowPreview = FrostedPowerFlowView()
             flowPreview.metrics = .preview
-            assert(PowerFlowView.flowSpeed(for: 80) > PowerFlowView.flowSpeed(for: 5))
-            assert(PowerFlowView.flowSpeed(for: 0) == 0)
-            assert(PowerFlowView.dashPhase(for: 20, frame: 3, reversed: false) < 0)
-            assert(PowerFlowView.dashPhase(for: 20, frame: 3, reversed: true) > 0)
+            assert(FrostedPowerFlowView.flowDuration(for: 80) > 0)
+            assert(FrostedPowerFlowView.flowDuration(for: 0) == 0)
+            assert(FrostedPowerFlowView.ribbonWidth(for: 80) > FrostedPowerFlowView.ribbonWidth(for: 5))
+            assert(FrostedPowerFlowView.ribbonWidth(for: 0) == 0)
+            assert(
+                FrostedPowerFlowView.ribbonStartWidth(for: 61.2, startsNarrow: false)
+                    == FrostedPowerFlowView.ribbonWidth(for: 61.2)
+            )
+            assert(
+                FrostedPowerFlowView.ribbonStartWidth(for: 10.7, startsNarrow: true)
+                    < FrostedPowerFlowView.ribbonStartWidth(for: 10.7, startsNarrow: false)
+            )
+            assert(
+                FrostedPowerFlowView.mainCardHeight(for: 61.2)
+                    > FrostedPowerFlowView.mainCardHeight(for: 0.2)
+            )
+            let outputStarts = FrostedPowerFlowView.outputBranchStartWidths(
+                for: [10.7, 3.83, 9.15]
+            )
+            let outputEnds = FrostedPowerFlowView.outputBranchEndWidths(
+                for: [10.7, 3.83, 9.15]
+            )
+            assert(outputStarts.count == 3 && outputEnds.count == 3)
+            assert(outputStarts[0] > outputStarts[2] && outputStarts[2] > outputStarts[1])
+            assert(outputEnds[0] > outputEnds[2] && outputEnds[2] > outputEnds[1])
+            assert(abs(outputStarts.reduce(0, +) - 116) < 0.01)
+            assert(abs(outputEnds.reduce(0, +) - 116) < 0.01)
+            assert((outputStarts.min() ?? 0) >= 31.99)
+            assert((outputEnds.min() ?? 0) >= 31.99)
+            let soloOutputStart = FrostedPowerFlowView.outputBranchStartWidths(for: [10.7])
+            let pairedOutputStarts = FrostedPowerFlowView.outputBranchStartWidths(for: [10.7, 9.15])
+            assert(abs(soloOutputStart[0] - 116) < 0.01)
+            assert(abs(pairedOutputStarts.reduce(0, +) - 116) < 0.01)
+            assert(pairedOutputStarts[0] > pairedOutputStarts[1])
+            let dynamicCards = FrostedPowerFlowView.endpointCardHeights(
+                for: [58.6, 3.90, 26.7]
+            )
+            assert(dynamicCards[0] > dynamicCards[2] && dynamicCards[2] > dynamicCards[1])
+            assert((dynamicCards.min() ?? 0) >= 95.99)
+            let equalizedDynamic = FrostedPowerFlowView.equalizedOutputWidths(
+                preferredHeights: dynamicCards,
+                watts: [58.6, 3.90, 26.7],
+                maximumTotalHeight: 360
+            )
+            assert(abs(equalizedDynamic.reduce(0, +) - 360) < 0.01)
+            assert((equalizedDynamic.min() ?? 0) >= 95.99)
+            let singlePreferred = FrostedPowerFlowView.preferredOutputCardHeights(
+                for: [10.7]
+            )
+            assert(singlePreferred == [132])
+            assert(
+                FrostedPowerFlowView.requiredSystemCardHeight(for: [10.7]) == 164
+            )
+            assert(FrostedPowerFlowView.endpointIconSize(forCardHeight: 96) == 64)
+            assert(FrostedPowerFlowView.endpointIconSize(forCardHeight: 132) >= 64)
+            assert(FrostedPowerFlowView.secondLevelIconSize(forCardHeight: 96) == 72)
+            assert(FrostedPowerFlowView.secondLevelIconSize(forCardHeight: 360) == 80)
+            assert(FrostedPowerFlowView.endpointCaption(for: "CPU") == "CPU")
+            assert(FrostedPowerFlowView.endpointCaption(for: "GPU") == "GPU")
+            assert(FrostedPowerFlowView.endpointCaption(for: "USB-C 显示器") == "显示器")
+            assert(FrostedPowerFlowView.endpointCaption(for: "USB-C 设备") == "外接设备")
+            let normalInputCards = FrostedPowerFlowView.linkedCardHeights(
+                for: [3.47, 84.0],
+                totalHeight: 456,
+                minimumHeight: 132
+            )
+            assert(abs(normalInputCards.reduce(0, +) - 456) < 0.01)
+            assert((normalInputCards.min() ?? 0) >= 131.99)
+            let compactPreferred = FrostedPowerFlowView.endpointCardHeights(
+                for: [10.7, 3.83, 9.15]
+            )
+            let equalizedCompact = FrostedPowerFlowView.equalizedOutputWidths(
+                preferredHeights: compactPreferred,
+                watts: [10.7, 3.83, 9.15],
+                maximumTotalHeight: 360
+            )
+            assert(abs(equalizedCompact.reduce(0, +) - 360) < 0.01)
+            assert(equalizedCompact[0] > equalizedCompact[2])
+            assert(equalizedCompact[2] > equalizedCompact[1])
+            assert((equalizedCompact.min() ?? 0) >= 95.99)
+            assert(
+                FrostedPowerFlowView.requiredSystemCardHeight(
+                    for: [10.7, 3.83, 9.15]
+                ) >= 343
+            )
+            let referenceSecondLevel = FrostedPowerFlowView.secondLevelCardHeights(
+                batteryWatts: 61.2,
+                systemWatts: 23.7,
+                minimumSystemHeight: 164
+            )
+            assert(
+                abs(referenceSecondLevel.battery + referenceSecondLevel.system - 456) < 0.01
+            )
+            let dynamicSecondLevel = FrostedPowerFlowView.secondLevelCardHeights(
+                batteryWatts: 3.47,
+                systemWatts: 84.0,
+                minimumSystemHeight: 360
+            )
+            assert(dynamicSecondLevel.system > dynamicSecondLevel.battery)
+            assert(dynamicSecondLevel.battery >= 95.99)
+            assert(dynamicSecondLevel.system >= 359.99)
+            assert(
+                abs(dynamicSecondLevel.battery + dynamicSecondLevel.system - 456) < 0.01
+            )
+            let compactLinkedCards = FrostedPowerFlowView.linkedCardHeights(
+                for: [3.47, 84.0],
+                totalHeight: 394,
+                minimumHeight: 72
+            )
+            assert(compactLinkedCards[0] < compactLinkedCards[1])
+            assert(abs(compactLinkedCards.reduce(0, +) - 394) < 0.01)
+            assert(FrostedPowerFlowView.showsChargingBranch(for: .preview))
+            assert(!FrostedPowerFlowView.showsBatteryBranch(for: .previewBatteryIdle))
+            assert(!FrostedPowerFlowView.showsBatteryBranch(for: .previewBatteryDischarging))
+            assert(FrostedPowerFlowView.showsBatteryInput(for: .previewBatteryDischarging))
+            assert(FrostedPowerFlowView.showsBatteryInput(for: .previewDynamicHierarchy))
+            assert(!FrostedPowerFlowView.batteryFlowIsReversed(for: .preview))
+            assert(FrostedPowerFlowView.batteryFlowIsReversed(for: .previewBatteryDischarging))
+            assert(FrostedPowerFlowView.visibleDeviceCount(for: .preview) == 3)
+            assert(FrostedPowerFlowView.displayedDeviceCount(for: .previewInternalBreakdown) == 3)
+            assert(
+                FrostedPowerFlowView.displayedOutputNames(for: .previewInternalBreakdown)
+                    == ["CPU", "GPU", "其他硬件"]
+            )
+            assert(
+                !FrostedPowerFlowView.displayedOutputNames(for: .previewInternalBreakdown)
+                    .contains { $0.contains("进程") }
+            )
+            assert(FrostedPowerFlowView.displayedOutputNames(for: .previewBatteryDischarging) == ["其他硬件"])
+            assert(FrostedPowerFlowView.displayedOutputNames(for: .previewWithoutOutputs) == ["其他硬件"])
+            assert(abs((SystemMetrics.previewLocalAndExternalBreakdown.localComputerWatts ?? 0) - 17.7) < 0.001)
+            assert(abs(SystemMetrics.previewLocalAndExternalBreakdown.externalOutputWatts - 15.0) < 0.001)
+            assert(abs(SystemMetrics.previewLocalAndExternalBreakdown.batterySupplyWatts - 20.1) < 0.001)
+            assert(SystemMetrics.previewLocalAndExternalBreakdown.fanRPMs == [2_160])
+            assert(abs((SystemMetrics.previewLocalAndExternalBreakdown.gpuTemperature ?? 0) - 63.9) < 0.001)
             flowPreview.startAnimating()
             assert(flowPreview.isAnimating)
             self.renderPreview(flowPreview, name: "power-flow")
             self.renderPreview(self.makePowerFlowMaterialPreview(metrics: .preview), name: "power-flow-menu-material")
-            let liveFlowPreview = PowerFlowView()
+            let liveFlowPreview = FrostedPowerFlowView()
             liveFlowPreview.metrics = liveMetrics
             self.renderPreview(liveFlowPreview, name: "power-flow-live")
-            let noOutputFlowPreview = PowerFlowView()
+            self.renderPreview(
+                self.makePowerFlowMaterialPreview(metrics: liveMetrics),
+                name: "power-flow-live-menu-material"
+            )
+            let noOutputFlowPreview = FrostedPowerFlowView()
             noOutputFlowPreview.metrics = .previewWithoutOutputs
             self.renderPreview(noOutputFlowPreview, name: "power-flow-no-outputs")
             self.renderPreview(
                 self.makePowerFlowMaterialPreview(metrics: .previewWithoutOutputs),
                 name: "power-flow-no-outputs-menu-material"
+            )
+            assert(!FrostedPowerFlowView.showsChargingBranch(for: .previewBatteryIdle))
+            assert(FrostedPowerFlowView.visibleDeviceCount(for: .previewBatteryIdle) == 3)
+            self.renderPreview(
+                self.makePowerFlowMaterialPreview(metrics: .previewBatteryIdle),
+                name: "power-flow-battery-idle-menu-material"
             )
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.80) { [weak self, flowPreview] in
                 assert(flowPreview.animationFrame > 0)
@@ -428,6 +604,41 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             let detailView = self.makeDetailContainer()
             self.renderPreview(detailView, name: "detail")
             let liveSnapshot = self.snapshot
+            let now = Date().timeIntervalSince1970
+            let sampleAccounts = [
+                UsageAccount(
+                    key: "codex:oauth:main", clientID: "codex", clientLabel: "Codex",
+                    accountLabel: "主力 Plus", providerLabel: "OpenAI Official", isCurrent: true, isOfficial: true,
+                    metricKind: "subscription", remainingBalance: nil, balanceUnit: nil,
+                    remainingPercent: 68, secondaryRemainingPercent: 82,
+                    todayCost: 25.3, monthCost: 421.8, todayRequests: 283, todayTokens: 70_000_000,
+                    cacheHitPercent: 49, successPercent: 99, modelLabel: "gpt-5.6-sol", metricsScope: "Codex 会话总计",
+                    chartTitle: "7日费用", chartUnit: "USD", latestAt: now,
+                    history: [22, 53, 21, 95, 47, 61, 118].enumerated().map {
+                        UsagePoint(timestamp: now - Double(6 - $0.offset) * 86_400, primary: Double($0.element), secondary: nil)
+                    }
+                ),
+                UsageAccount(
+                    key: "codex:provider:kakou", clientID: "codex", clientLabel: "Codex",
+                    accountLabel: "卡扣AI", providerLabel: "API", isCurrent: false, isOfficial: false,
+                    metricKind: "balance", remainingBalance: -0.1084, balanceUnit: "USD",
+                    remainingPercent: nil, secondaryRemainingPercent: nil,
+                    todayCost: 0, monthCost: 0, todayRequests: 0, todayTokens: 0,
+                    cacheHitPercent: nil, successPercent: nil, modelLabel: "", metricsScope: "卡扣AI",
+                    chartTitle: "余额趋势", chartUnit: "USD", latestAt: now,
+                    history: [UsagePoint(timestamp: now, primary: -0.1084, secondary: nil)]
+                ),
+                UsageAccount(
+                    key: "codex:provider:deepseek", clientID: "codex", clientLabel: "Codex",
+                    accountLabel: "DeepSeek", providerLabel: "API", isCurrent: false, isOfficial: false,
+                    metricKind: "balance", remainingBalance: 6.21, balanceUnit: "CNY",
+                    remainingPercent: nil, secondaryRemainingPercent: nil,
+                    todayCost: 0, monthCost: 0, todayRequests: 0, todayTokens: 0,
+                    cacheHitPercent: nil, successPercent: nil, modelLabel: "", metricsScope: "DeepSeek",
+                    chartTitle: "余额趋势", chartUnit: "CNY", latestAt: now,
+                    history: [UsagePoint(timestamp: now, primary: 6.21, secondary: nil)]
+                )
+            ]
             self.snapshot = CodexSnapshot(
                 label: liveSnapshot.label,
                 state: liveSnapshot.state,
@@ -449,9 +660,12 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
                         remainingBalance: 57.2,
                         balanceUnit: "USD"
                     )
-                ]
+                ],
+                accounts: sampleAccounts
             )
-            self.renderPreview(self.makeDetailContainer(), name: "detail-api-budget")
+            self.renderPreview(self.makeDetailContainer(), name: "detail-account-dashboard")
+            self.selectedUsageAccountKey = "codex:oauth:main"
+            self.renderPreview(self.makeUsageContainer(), name: "usage-detail")
             self.snapshot = CodexSnapshot(
                 label: "空闲",
                 state: "idle",
@@ -495,14 +709,251 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         }
     }
 
+    func runStylePreviews() {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 390, height: 390))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let flow = PowerFlowView()
+        flow.metrics = .preview
+        container.addSubview(flow)
+        for (index, style) in PowerFlowStyle.allCases.enumerated() {
+            flow.style = style
+            flow.startAnimating()
+            renderPreview(container, name: "powerflow-style-\(style.rawValue)")
+            AppLog.write("style preview \(index + 1)/\(PowerFlowStyle.allCases.count): \(style.rawValue)")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            NSApp.terminate(nil)
+        }
+    }
+
+    func runPowerFlowAnimationPreview() {
+        // Design-option renders: the same data-driven renderer at two
+        // structure scales so the reference can be compared 1:1 before we
+        // commit to the final layout.
+        for (name, structure) in [
+            ("powerflow-option-reference", FrostedPowerFlowView.Structure.reference),
+            ("powerflow-option-bold", FrostedPowerFlowView.Structure.bold)
+        ] {
+            let option = FrostedPowerFlowView()
+            option.appearance = NSAppearance(named: .darkAqua)
+            option.structure = structure
+            option.metrics = .preview
+            renderPreview(option, name: name)
+        }
+
+        let flow = FrostedPowerFlowView()
+        flow.appearance = NSAppearance(named: .darkAqua)
+        flow.metrics = .preview
+        for previewFrame in 0..<24 {
+            flow.setAnimationFrameForPreview(previewFrame * 5)
+            renderPreview(
+                flow,
+                name: String(format: "power-flow-animation-%02d", previewFrame)
+            )
+        }
+        let dynamicFlow = FrostedPowerFlowView()
+        dynamicFlow.appearance = NSAppearance(named: .darkAqua)
+        dynamicFlow.metrics = .previewDynamicHierarchy
+        for previewFrame in 0..<8 {
+            dynamicFlow.setAnimationFrameForPreview(previewFrame * 12)
+            renderPreview(
+                dynamicFlow,
+                name: String(format: "power-flow-dynamic-animation-%02d", previewFrame)
+            )
+        }
+        renderPowerFlowAnimationSequence(
+            metrics: .previewCompactLowBatteryCharging,
+            appearance: NSAppearance(named: .aqua),
+            name: "power-flow-compact-low-battery-animation",
+            frameCount: 18,
+            frameStep: 6
+        )
+        renderPowerFlowAnimationSequence(
+            metrics: .previewDynamicHierarchy,
+            appearance: NSAppearance(named: .aqua),
+            name: "power-flow-underpowered-hierarchy-animation",
+            frameCount: 18,
+            frameStep: 6
+        )
+        renderPowerFlowAnimationSequence(
+            metrics: .previewInternalBreakdown,
+            appearance: NSAppearance(named: .aqua),
+            name: "power-flow-internal-breakdown-animation",
+            frameCount: 36,
+            frameStep: 3
+        )
+        for (name, metrics) in [
+            ("power-flow-state-charging", SystemMetrics.preview),
+            ("power-flow-state-battery-idle", SystemMetrics.previewBatteryIdle),
+            ("power-flow-state-battery-discharging", SystemMetrics.previewBatteryDischarging),
+            ("power-flow-state-dynamic-hierarchy", SystemMetrics.previewDynamicHierarchy),
+            ("power-flow-state-compact-low-battery", SystemMetrics.previewCompactLowBatteryCharging),
+            ("power-flow-state-single-device", SystemMetrics.previewSingleOutput),
+            ("power-flow-state-internal-breakdown", SystemMetrics.previewInternalBreakdown),
+            ("power-flow-state-one-device-missing", SystemMetrics.previewOneDeviceMissing),
+            ("power-flow-state-battery-only", SystemMetrics.previewWithoutOutputs)
+        ] {
+            let statePreview = FrostedPowerFlowView()
+            statePreview.appearance = NSAppearance(named: .darkAqua)
+            statePreview.metrics = metrics
+            renderPreview(statePreview, name: name)
+        }
+        for (name, appearanceName) in [
+            ("light", NSAppearance.Name.aqua),
+            ("dark", NSAppearance.Name.darkAqua)
+        ] {
+            let statePreview = FrostedPowerFlowView()
+            statePreview.appearance = NSAppearance(named: appearanceName)
+            statePreview.metrics = .preview
+            renderPreview(statePreview, name: "power-flow-state-charging-\(name)")
+            renderPreview(
+                makePowerFlowMaterialPreview(
+                    metrics: .preview,
+                    appearance: NSAppearance(named: appearanceName)
+                ),
+                name: "power-flow-menu-material-\(name)"
+            )
+            renderPreview(
+                makePowerFlowMaterialPreview(
+                    metrics: .previewCompactReference,
+                    appearance: NSAppearance(named: appearanceName)
+                ),
+                name: "power-flow-compact-menu-material-\(name)"
+            )
+            renderPreview(
+                makePowerFlowMaterialPreview(
+                    metrics: .previewBatteryIdle,
+                    appearance: NSAppearance(named: appearanceName)
+                ),
+                name: "power-flow-battery-idle-menu-material-\(name)"
+            )
+            renderPreview(
+                makePowerFlowMaterialPreview(
+                    metrics: .previewCompactLowBatteryCharging,
+                    appearance: NSAppearance(named: appearanceName)
+                ),
+                name: "power-flow-compact-low-battery-menu-material-\(name)"
+            )
+        }
+        for (name, metrics) in [
+            ("one", SystemMetrics.previewSingleOutput),
+            ("two", SystemMetrics.previewOneDeviceMissing),
+            ("three", SystemMetrics.preview)
+        ] {
+            renderPreview(
+                makePowerFlowMaterialPreview(
+                    metrics: metrics,
+                    appearance: NSAppearance(named: .aqua)
+                ),
+                name: "power-flow-device-count-\(name)-light"
+            )
+        }
+        renderPreview(
+            makePowerFlowMaterialPreview(
+                metrics: .previewDynamicHierarchy,
+                appearance: NSAppearance(named: .aqua)
+            ),
+            name: "power-flow-dynamic-hierarchy-light"
+        )
+        renderPreview(
+            makePowerFlowMaterialPreview(
+                metrics: .previewDynamicHierarchy,
+                appearance: NSAppearance(named: .darkAqua)
+            ),
+            name: "power-flow-dynamic-hierarchy-dark"
+        )
+        renderPreview(
+            makePowerFlowMaterialPreview(
+                metrics: .previewInternalBreakdown,
+                appearance: NSAppearance(named: .aqua)
+            ),
+            name: "power-flow-internal-breakdown-light"
+        )
+        renderPreview(
+            makePowerFlowMaterialPreview(
+                metrics: .previewInternalBreakdown,
+                appearance: NSAppearance(named: .darkAqua)
+            ),
+            name: "power-flow-internal-breakdown-dark"
+        )
+        for (name, appearanceName) in [
+            ("light", NSAppearance.Name.aqua),
+            ("dark", NSAppearance.Name.darkAqua)
+        ] {
+            renderPreview(
+                makePowerFlowMaterialPreview(
+                    metrics: .previewLocalAndExternalBreakdown,
+                    appearance: NSAppearance(named: appearanceName)
+                ),
+                name: "power-flow-local-external-summary-\(name)"
+            )
+        }
+        DispatchQueue.main.async {
+            NSApp.terminate(nil)
+        }
+    }
+
+    func runGreenFlowAnimationVariantPreviews() {
+        for style in FlowAnimationStyle.allCases {
+            renderPowerFlowAnimationSequence(
+                metrics: .previewLocalAndExternalBreakdown,
+                appearance: NSAppearance(named: .aqua),
+                name: "power-flow-green-\(style.rawValue)",
+                frameCount: 36,
+                frameStep: 3,
+                animationStyle: style
+            )
+            renderPreview(
+                makePowerFlowMaterialPreview(
+                    metrics: .previewLocalAndExternalBreakdown,
+                    appearance: NSAppearance(named: .aqua),
+                    animationFrame: 24,
+                    animationStyle: style
+                ),
+                name: "power-flow-green-\(style.rawValue)-still"
+            )
+        }
+        DispatchQueue.main.async {
+            NSApp.terminate(nil)
+        }
+    }
+
+    func runLivePowerTelemetryProbe() {
+        Task { [weak self] in
+            _ = await SystemMetricsReader.fetch()
+            try? await Task.sleep(for: .seconds(1.15))
+            let metrics = await SystemMetricsReader.fetch()
+            guard let self else { return }
+            let cpu = metrics.cpuWatts.map { String(format: "%.3f W", $0) } ?? "unavailable"
+            let gpu = metrics.gpuWatts.map { String(format: "%.3f W", $0) } ?? "unavailable"
+            let fans = metrics.fanRPMs.map { String(format: "%.0f", $0) }.joined(separator: ",")
+            let batteryTemperature = metrics.batteryTemperature.map {
+                String(format: "%.2f C", $0)
+            } ?? "unavailable"
+            let gpuTemperature = metrics.gpuTemperature.map {
+                String(format: "%.2f C", $0)
+            } ?? "unavailable"
+            let processes = metrics.processPower.map {
+                "\($0.name):\(String(format: "%.4f", $0.billedWatts))W"
+            }.joined(separator: ",")
+            AppLog.write("power telemetry cpu=\(cpu) gpu=\(gpu) fanRPM=[\(fans)] batteryTemp=\(batteryTemperature) gpuTemp=\(gpuTemperature) billedProcesses=[\(processes)]")
+            self.renderPreview(
+                self.makePowerFlowMaterialPreview(
+                    metrics: metrics,
+                    appearance: NSAppearance(named: .aqua)
+                ),
+                name: "power-flow-live-hardware-breakdown-light"
+            )
+            NSApp.terminate(nil)
+        }
+    }
+
     private func renderPreview(_ view: NSView, name: String) {
-        view.layoutSubtreeIfNeeded()
-        view.displayIfNeeded()
-        guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+        guard let representation = renderedBitmap(for: view) else {
             AppLog.write("preview \(name) failed: bitmap")
             return
         }
-        view.cacheDisplay(in: view.bounds, to: representation)
         guard let data = representation.representation(using: .png, properties: [:]) else {
             AppLog.write("preview \(name) failed: png")
             return
@@ -517,6 +968,78 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         }
     }
 
+    private func renderedBitmap(for view: NSView) -> NSBitmapImageRep? {
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+        guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            return nil
+        }
+        view.cacheDisplay(in: view.bounds, to: representation)
+        return representation
+    }
+
+    private func renderPowerFlowAnimationSequence(
+        metrics: SystemMetrics,
+        appearance: NSAppearance?,
+        name: String,
+        frameCount: Int,
+        frameStep: Int,
+        animationStyle: FlowAnimationStyle = .auroraPulse
+    ) {
+        let gifURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/CodexTouchBarNative-\(name).gif")
+        guard let destination = CGImageDestinationCreateWithURL(
+            gifURL as CFURL,
+            UTType.gif.identifier as CFString,
+            frameCount,
+            nil
+        ) else {
+            AppLog.write("preview \(name) failed: gif destination")
+            return
+        }
+        CGImageDestinationSetProperties(
+            destination,
+            [
+                kCGImagePropertyGIFDictionary: [
+                    kCGImagePropertyGIFLoopCount: 0
+                ]
+            ] as CFDictionary
+        )
+        for index in 0..<frameCount {
+            let view = makePowerFlowMaterialPreview(
+                metrics: metrics,
+                appearance: appearance,
+                animationFrame: index * frameStep,
+                animationStyle: animationStyle
+            )
+            guard let representation = renderedBitmap(for: view),
+                  let image = representation.cgImage else {
+                continue
+            }
+            let frameName = String(format: "%@-%02d", name, index)
+            if let data = representation.representation(using: .png, properties: [:]) {
+                let frameURL = FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("Library/Logs/CodexTouchBarNative-\(frameName).png")
+                try? data.write(to: frameURL, options: .atomic)
+            }
+            CGImageDestinationAddImage(
+                destination,
+                image,
+                [
+                    kCGImagePropertyGIFDictionary: [
+                        kCGImagePropertyGIFDelayTime: 0.10,
+                        kCGImagePropertyGIFUnclampedDelayTime: 0.10
+                    ]
+                ] as CFDictionary
+            )
+        }
+        if CGImageDestinationFinalize(destination) {
+            AppLog.write("preview \(name)=\(gifURL.path) animated gif")
+        } else {
+            AppLog.write("preview \(name) failed: gif finalize")
+        }
+    }
+
     private func renderSidecarPreview(_ status: SidecarStatus, name: String) {
         sidecarStatus = status
         sidecarFrame = 0
@@ -525,13 +1048,30 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         renderPreview(view, name: name)
     }
 
-    private func makePowerFlowMaterialPreview(metrics: SystemMetrics) -> NSView {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 390, height: 390))
+    private func makePowerFlowMaterialPreview(
+        metrics: SystemMetrics,
+        appearance: NSAppearance? = nil,
+        animationFrame: Int? = nil,
+        animationStyle: FlowAnimationStyle = .auroraPulse
+    ) -> NSView {
+        let panel = PowerFlowPanelView()
+        panel.appearance = appearance
+        panel.metrics = metrics
+        panel.setAnimationStyleForPreview(animationStyle)
+        if let animationFrame {
+            panel.setAnimationFrameForPreview(animationFrame)
+        }
+        panel.layoutSubtreeIfNeeded()
+        let container = NSView(frame: NSRect(origin: .zero, size: panel.frame.size))
+        container.appearance = appearance
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        let flow = PowerFlowView()
-        flow.metrics = metrics
-        container.addSubview(flow)
+        let isDark = appearance?.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        container.layer?.backgroundColor = (isDark
+            ? NSColor(calibratedWhite: 0.11, alpha: 1)
+            : NSColor(calibratedWhite: 0.86, alpha: 1)
+        ).cgColor
+        panel.frame.origin = .zero
+        container.addSubview(panel)
         return container
     }
 
@@ -551,6 +1091,11 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             let item = NSCustomTouchBarItem(identifier: identifier)
             item.visibilityPriority = .high
             item.view = makeDetailContainer()
+            return item
+        case Item.usageContainer:
+            let item = NSCustomTouchBarItem(identifier: identifier)
+            item.visibilityPriority = .high
+            item.view = makeUsageContainer()
             return item
         case Item.systemContainer:
             let item = NSCustomTouchBarItem(identifier: identifier)
@@ -648,23 +1193,43 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         backButton = back
         container.addSubview(back)
 
-        let quota = QuotaView(width: 225)
+        let quota = QuotaView(width: 455)
         quota.frame.origin = NSPoint(x: 40, y: 0)
-        quota.update(with: snapshot.limits, platforms: snapshot.platforms)
-        quota.onOpenUsage = { [weak self] in
-            self?.openApplication(path: "/Applications/CC Switch.app")
+        quota.update(with: snapshot.limits, platforms: snapshot.platforms, accounts: snapshot.accounts)
+        quota.onOpenUsage = { [weak self] key in
+            self?.showUsageDetails(key)
         }
         quotaView = quota
         container.addSubview(quota)
 
-        let sessions = SessionStripView(width: 450)
-        sessions.frame.origin = NSPoint(x: 273, y: 0)
+        let sessions = SessionStripView(width: 220)
+        sessions.frame.origin = NSPoint(x: 503, y: 0)
         sessions.onOpen = { [weak self] id in self?.openCodexThread(id) }
         sessions.update(with: snapshot.activeThreads)
         sessionView = sessions
         container.addSubview(sessions)
 
         AppLog.write("detail frames back=\(back.frame) quota=\(quota.frame) sessions=\(sessions.frame)")
+        return container
+    }
+
+    private func makeUsageContainer() -> NSView {
+        let container = FixedTouchBarContainer(width: 730)
+        let back = iconButton(
+            symbol: "chevron.backward",
+            description: "返回 AI coding 账户",
+            action: #selector(showDetails)
+        )
+        back.frame = NSRect(x: 0, y: 0, width: 32, height: 30)
+        container.addSubview(back)
+
+        let details = UsageDetailStripView(width: 683)
+        details.frame.origin = NSPoint(x: 40, y: 0)
+        let accounts = snapshot.accounts ?? []
+        details.usage = accounts.first { $0.key == selectedUsageAccountKey } ?? accounts.first
+        usageDetailView = details
+        container.addSubview(details)
+        AppLog.write("usage detail key=\(selectedUsageAccountKey ?? "") frame=\(details.frame)")
         return container
     }
 
@@ -679,6 +1244,10 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
 
     private var detailIdentifiers: [NSTouchBarItem.Identifier] {
         [Item.detailContainer]
+    }
+
+    private var usageIdentifiers: [NSTouchBarItem.Identifier] {
+        [Item.usageContainer]
     }
 
     private var systemIdentifiers: [NSTouchBarItem.Identifier] {
@@ -699,7 +1268,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.delegate = self
-        let powerFlow = PowerFlowView()
+        let powerFlow = PowerFlowPanelView()
         powerFlow.metrics = systemMetrics
         powerFlowView = powerFlow
         let powerItem = NSMenuItem()
@@ -713,6 +1282,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         moreMenu.addItem(menuItem("打开 AI coding 详情", #selector(showDetails)))
         moreMenu.addItem(menuItem("打开随航", #selector(openSidecar)))
         moreMenu.addItem(menuItem("打开语音助手", #selector(openVoiceAssistant)))
+        moreMenu.addItem(menuItem("远程 Codex 控制台…", #selector(showRemoteControl)))
         moreMenu.addItem(menuItem("打开 CC Switch", #selector(openCCSwitch)))
         moreMenu.addItem(menuItem("打开当前 Codex 会话", #selector(openLatestCodexThread)))
         moreMenu.addItem(.separator())
@@ -824,8 +1394,10 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         let power = systemMetrics.systemWatts.map { String(format: "%.1f W", $0) } ?? "-- W"
         let memory = systemMetrics.memoryPercent.map { String(format: "%.0f%%", $0) } ?? "--"
         let gpu = systemMetrics.gpuPercent.map { String(format: "%.0f%%", $0) } ?? "--"
+        let cpuPower = systemMetrics.cpuWatts.map { String(format: "%.2f W", $0) } ?? "--"
+        let gpuPower = systemMetrics.gpuWatts.map { String(format: "%.2f W", $0) } ?? "--"
         let temperature = systemMetrics.batteryTemperature.map { String(format: "%.1f°C", $0) } ?? "--"
-        return "整机功率 \(power) · 内存占用 \(memory) · GPU 占用 \(gpu) · 电池温度 \(temperature)"
+        return "整机功率 \(power) · CPU 功率 \(cpuPower) · GPU 功率 \(gpuPower) · 内存占用 \(memory) · GPU 占用 \(gpu) · 电池温度 \(temperature)"
     }
 
 
@@ -836,8 +1408,11 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             aiCodingButton.contentTintColor = color
         }
         controlStripButton?.contentTintColor = color
-        quotaView?.update(with: snapshot.limits, platforms: snapshot.platforms)
+        quotaView?.update(with: snapshot.limits, platforms: snapshot.platforms, accounts: snapshot.accounts)
         sessionView?.update(with: snapshot.activeThreads)
+        if let selectedUsageAccountKey {
+            usageDetailView?.usage = snapshot.accounts?.first { $0.key == selectedUsageAccountKey }
+        }
         updateSidecarButton(animated: true)
 
         statusItem.button?.toolTip = "AI coding · \(snapshot.label)"
@@ -1103,6 +1678,13 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
     @objc private func showDetails() {
         touchBar.principalItemIdentifier = nil
         touchBar.defaultItemIdentifiers = detailIdentifiers
+        presentTouchBar()
+    }
+
+    private func showUsageDetails(_ key: String) {
+        selectedUsageAccountKey = key
+        touchBar.principalItemIdentifier = nil
+        touchBar.defaultItemIdentifiers = usageIdentifiers
         presentTouchBar()
     }
 
@@ -1394,6 +1976,10 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func showRemoteControl() {
+        remoteControl.showWindow()
+    }
+
     private func openCodexThread(_ id: String) {
         guard let url = URL(string: "codex://threads/\(id)") else { return }
         NSWorkspace.shared.open(url)
@@ -1415,10 +2001,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let controller = TouchBarController()
         self.controller = controller
+        if let probeIndex = CommandLine.arguments.firstIndex(of: "--provider-continuity-probe"),
+           CommandLine.arguments.indices.contains(probeIndex + 2) {
+            controller.runProviderContinuityProbe(
+                providerName: CommandLine.arguments[probeIndex + 1],
+                threadID: CommandLine.arguments[probeIndex + 2]
+            )
+            return
+        }
         controller.start()
         registerLoginItem()
         if CommandLine.arguments.contains("--smoke-test") {
             controller.runSmokeTest()
+        } else if CommandLine.arguments.contains("--remote-protocol-smoke-test") {
+            controller.runRemoteProtocolSmokeTest()
+        } else if CommandLine.arguments.contains("--flow-animation-preview") {
+            controller.runPowerFlowAnimationPreview()
+        } else if CommandLine.arguments.contains("--flow-animation-variants") {
+            controller.runGreenFlowAnimationVariantPreviews()
+        } else if CommandLine.arguments.contains("--power-telemetry-probe") {
+            controller.runLivePowerTelemetryProbe()
+        } else if CommandLine.arguments.contains("--style-previews") {
+            controller.runStylePreviews()
         }
     }
 

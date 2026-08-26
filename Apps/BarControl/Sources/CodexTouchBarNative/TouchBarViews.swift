@@ -22,7 +22,7 @@ final class FixedTouchBarContainer: NSView {
 }
 
 @MainActor
-final class QuotaView: NSView {
+final class LegacyQuotaView: NSView {
     private var windows: [LimitWindow] = []
     private var platforms: [PlatformUsage] = []
     var onOpenUsage: (() -> Void)?

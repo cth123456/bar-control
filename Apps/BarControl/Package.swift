@@ -9,9 +9,24 @@ let package = Package(
         .executable(name: "CodexTouchBarNative", targets: ["CodexTouchBarNative"])
     ],
     targets: [
+        .target(
+            name: "PowerTelemetrySupport",
+            path: "Sources/PowerTelemetrySupport",
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedFramework("CoreFoundation"),
+                .linkedFramework("IOKit")
+            ]
+        ),
         .executableTarget(
             name: "CodexTouchBarNative",
+            dependencies: ["PowerTelemetrySupport"],
             path: "Sources/CodexTouchBarNative"
+        ),
+        .testTarget(
+            name: "CodexTouchBarNativeTests",
+            dependencies: ["CodexTouchBarNative"],
+            path: "Tests/CodexTouchBarNativeTests"
         )
     ]
 )

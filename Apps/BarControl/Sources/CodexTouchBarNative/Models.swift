@@ -67,6 +67,66 @@ struct PlatformUsage: Codable, Sendable {
     }
 }
 
+struct UsagePoint: Codable, Sendable {
+    let timestamp: Double
+    let primary: Double
+    let secondary: Double?
+}
+
+struct UsageAccount: Codable, Sendable {
+    let key: String
+    let clientID: String
+    let clientLabel: String
+    let accountLabel: String
+    let providerLabel: String
+    let isCurrent: Bool
+    let isOfficial: Bool
+    let metricKind: String
+    let remainingBalance: Double?
+    let balanceUnit: String?
+    let remainingPercent: Double?
+    let secondaryRemainingPercent: Double?
+    let todayCost: Double
+    let monthCost: Double
+    let todayRequests: Int
+    let todayTokens: Int
+    let cacheHitPercent: Double?
+    let successPercent: Double?
+    let modelLabel: String
+    let metricsScope: String
+    let chartTitle: String
+    let chartUnit: String
+    let latestAt: Double
+    let history: [UsagePoint]
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case clientID = "client_id"
+        case clientLabel = "client_label"
+        case accountLabel = "account_label"
+        case providerLabel = "provider_label"
+        case isCurrent = "is_current"
+        case isOfficial = "is_official"
+        case metricKind = "metric_kind"
+        case remainingBalance = "remaining_balance"
+        case balanceUnit = "balance_unit"
+        case remainingPercent = "remaining_percent"
+        case secondaryRemainingPercent = "secondary_remaining_percent"
+        case todayCost = "today_cost"
+        case monthCost = "month_cost"
+        case todayRequests = "today_requests"
+        case todayTokens = "today_tokens"
+        case cacheHitPercent = "cache_hit_percent"
+        case successPercent = "success_percent"
+        case modelLabel = "model_label"
+        case metricsScope = "metrics_scope"
+        case chartTitle = "chart_title"
+        case chartUnit = "chart_unit"
+        case latestAt = "latest_at"
+        case history
+    }
+}
+
 struct CodexSnapshot: Codable, Sendable {
     let label: String
     let state: String
@@ -74,9 +134,10 @@ struct CodexSnapshot: Codable, Sendable {
     let activeThreads: [ActiveThread]
     let limits: RateLimits?
     let platforms: [PlatformUsage]?
+    var accounts: [UsageAccount]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case label, state, limits, platforms
+        case label, state, limits, platforms, accounts
         case activeCount = "active_count"
         case activeThreads = "active_threads"
     }

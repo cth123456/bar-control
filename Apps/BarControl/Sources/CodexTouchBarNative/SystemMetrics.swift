@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import IOKit
+import PowerTelemetrySupport
 
 struct USBPowerFlow: Equatable, Sendable {
     let portIndex: Int
@@ -13,6 +14,24 @@ struct USBPowerFlow: Equatable, Sendable {
 struct USBDeviceDescriptor: Equatable, Sendable {
     let name: String
     let locationID: UInt32
+}
+
+struct ProcessPowerSample: Equatable, Sendable {
+    let name: String
+    /// Best-effort watts derived from macOS' per-process billed-energy counter.
+    let billedWatts: Double
+}
+
+struct HardwarePowerSample: Equatable, Sendable {
+    let cpuWatts: Double?
+    let gpuWatts: Double?
+    let processes: [ProcessPowerSample]
+
+    static let unavailable = HardwarePowerSample(
+        cpuWatts: nil,
+        gpuWatts: nil,
+        processes: []
+    )
 }
 
 struct SystemMetrics: Equatable, Sendable {
@@ -30,6 +49,49 @@ struct SystemMetrics: Equatable, Sendable {
     let memoryPercent: Double?
     let gpuPercent: Double?
     let usbOutputs: [USBPowerFlow]
+    let cpuWatts: Double?
+    let gpuWatts: Double?
+    let processPower: [ProcessPowerSample]
+    let fanRPMs: [Double]
+    let gpuTemperature: Double?
+
+    init(
+        externalPower: Bool,
+        adapterLimitWatts: Double?,
+        inputWatts: Double?,
+        inputVoltage: Double?,
+        inputCurrent: Double?,
+        systemWatts: Double?,
+        batteryWatts: Double?,
+        batteryPercent: Int?,
+        batteryTemperature: Double?,
+        memoryPercent: Double?,
+        gpuPercent: Double?,
+        usbOutputs: [USBPowerFlow],
+        cpuWatts: Double? = nil,
+        gpuWatts: Double? = nil,
+        processPower: [ProcessPowerSample] = [],
+        fanRPMs: [Double] = [],
+        gpuTemperature: Double? = nil
+    ) {
+        self.externalPower = externalPower
+        self.adapterLimitWatts = adapterLimitWatts
+        self.inputWatts = inputWatts
+        self.inputVoltage = inputVoltage
+        self.inputCurrent = inputCurrent
+        self.systemWatts = systemWatts
+        self.batteryWatts = batteryWatts
+        self.batteryPercent = batteryPercent
+        self.batteryTemperature = batteryTemperature
+        self.memoryPercent = memoryPercent
+        self.gpuPercent = gpuPercent
+        self.usbOutputs = usbOutputs
+        self.cpuWatts = cpuWatts
+        self.gpuWatts = gpuWatts
+        self.processPower = processPower
+        self.fanRPMs = fanRPMs
+        self.gpuTemperature = gpuTemperature
+    }
 
     static let unavailable = SystemMetrics(
         externalPower: false,
@@ -49,19 +111,137 @@ struct SystemMetrics: Equatable, Sendable {
     static let preview = SystemMetrics(
         externalPower: true,
         adapterLimitWatts: 85,
-        inputWatts: 61.2,
+        inputWatts: 83.98,
         inputVoltage: 20,
-        inputCurrent: 3.06,
+        inputCurrent: 4.199,
         systemWatts: 23.7,
-        batteryWatts: 37.5,
+        batteryWatts: 61.2,
         batteryPercent: 47,
         batteryTemperature: 33.7,
         memoryPercent: 61,
         gpuPercent: 28,
         usbOutputs: [
             USBPowerFlow(portIndex: 1, name: "iPad", watts: 10.7, voltage: 5.1, current: 2.1),
-            USBPowerFlow(portIndex: 2, name: "USB-C 显示器", watts: 3.83, voltage: 5.0, current: 0.77)
+            USBPowerFlow(portIndex: 2, name: "USB-C 显示器", watts: 3.83, voltage: 5.0, current: 0.77),
+            USBPowerFlow(portIndex: 3, name: "USB-C 设备", watts: 9.15, voltage: 5.0, current: 1.83)
         ]
+    )
+
+    static let previewBatteryIdle = SystemMetrics(
+        externalPower: true,
+        adapterLimitWatts: 85,
+        inputWatts: 23.7,
+        inputVoltage: 20,
+        inputCurrent: 1.185,
+        systemWatts: 23.7,
+        batteryWatts: 0,
+        batteryPercent: 80,
+        batteryTemperature: 32.8,
+        memoryPercent: 58,
+        gpuPercent: 17,
+        usbOutputs: preview.usbOutputs
+    )
+
+    static let previewBatteryDischarging = SystemMetrics(
+        externalPower: true,
+        adapterLimitWatts: 20,
+        inputWatts: 12.9,
+        inputVoltage: 20,
+        inputCurrent: 0.645,
+        systemWatts: 13.1,
+        batteryWatts: -0.2,
+        batteryPercent: 80,
+        batteryTemperature: 32.8,
+        memoryPercent: 58,
+        gpuPercent: 17,
+        usbOutputs: []
+    )
+
+    /// Matches the approved 1290×563 light reference so geometry and text
+    /// scale can be compared at the same visual state during render QA.
+    static let previewCompactReference = SystemMetrics(
+        externalPower: true,
+        adapterLimitWatts: 67,
+        inputWatts: 66.8,
+        inputVoltage: 20,
+        inputCurrent: 3.34,
+        systemWatts: 25.59,
+        batteryWatts: 41.21,
+        batteryPercent: 80,
+        batteryTemperature: 32.8,
+        memoryPercent: 58,
+        gpuPercent: 17,
+        usbOutputs: []
+    )
+
+    static let previewOneDeviceMissing = SystemMetrics(
+        externalPower: true,
+        adapterLimitWatts: 85,
+        inputWatts: 80.15,
+        inputVoltage: 20,
+        inputCurrent: 4.008,
+        systemWatts: 19.87,
+        batteryWatts: 61.2,
+        batteryPercent: 47,
+        batteryTemperature: 33.7,
+        memoryPercent: 61,
+        gpuPercent: 28,
+        usbOutputs: [preview.usbOutputs[0], preview.usbOutputs[2]]
+    )
+
+    static let previewSingleOutput = SystemMetrics(
+        externalPower: true,
+        adapterLimitWatts: 85,
+        inputWatts: 72.4,
+        inputVoltage: 20,
+        inputCurrent: 3.62,
+        systemWatts: 11.2,
+        batteryWatts: 61.2,
+        batteryPercent: 47,
+        batteryTemperature: 33.7,
+        memoryPercent: 61,
+        gpuPercent: 28,
+        usbOutputs: [preview.usbOutputs[0]]
+    )
+
+    /// Underpowered-adapter hierarchy fixture from IMG_4665: 84 W from the
+    /// charger and 3.47 W from the battery join the whole-machine node before
+    /// splitting across three measured consumers.
+    static let previewDynamicHierarchy = SystemMetrics(
+        externalPower: true,
+        adapterLimitWatts: 84,
+        inputWatts: 84.0,
+        inputVoltage: 20,
+        inputCurrent: 4.20,
+        systemWatts: 89.0,
+        batteryWatts: -3.47,
+        batteryPercent: 80,
+        batteryTemperature: 32.8,
+        memoryPercent: 61,
+        gpuPercent: 28,
+        usbOutputs: [
+            USBPowerFlow(portIndex: 1, name: "CPU", watts: 58.6, voltage: nil, current: nil),
+            USBPowerFlow(portIndex: 2, name: "USB-C 显示器", watts: 3.90, voltage: nil, current: nil),
+            USBPowerFlow(portIndex: 3, name: "USB-C 设备", watts: 26.7, voltage: nil, current: nil)
+        ]
+    )
+
+    /// Low positive battery charge with no external outputs. This isolates the
+    /// compact branch/card proportional allocation and left-to-right charging
+    /// animation from the third-level fan-out.
+    static let previewCompactLowBatteryCharging = SystemMetrics(
+        externalPower: true,
+        adapterLimitWatts: 89,
+        inputWatts: 87.47,
+        inputVoltage: 20,
+        inputCurrent: 4.374,
+        systemWatts: 84.0,
+        batteryWatts: 3.47,
+        batteryPercent: 80,
+        batteryTemperature: 32.8,
+        memoryPercent: 61,
+        gpuPercent: 28,
+        usbOutputs: []
     )
 
     static let previewWithoutOutputs = SystemMetrics(
@@ -78,6 +258,82 @@ struct SystemMetrics: Equatable, Sendable {
         gpuPercent: 17,
         usbOutputs: []
     )
+
+    /// Explicit design fixture for the new internal-consumer hierarchy. These
+    /// values are used only for deterministic preview rendering; live UI data
+    /// comes from IOReport and the kernel billed-energy counters below.
+    static let previewInternalBreakdown = SystemMetrics(
+        externalPower: true,
+        adapterLimitWatts: 67,
+        inputWatts: 41.8,
+        inputVoltage: 20,
+        inputCurrent: 2.09,
+        systemWatts: 34.6,
+        batteryWatts: 7.2,
+        batteryPercent: 76,
+        batteryTemperature: 32.6,
+        memoryPercent: 62,
+        gpuPercent: 41,
+        usbOutputs: [],
+        cpuWatts: 16.8,
+        gpuWatts: 9.4,
+        processPower: [
+            ProcessPowerSample(name: "WindowServer", billedWatts: 1.26),
+            ProcessPowerSample(name: "Codex", billedWatts: 0.84)
+        ],
+        fanRPMs: [0],
+        gpuTemperature: 51.8
+    )
+
+    /// User-facing fixture for a Mac that is simultaneously powered by a
+    /// charger and its battery while supplying an iPad. The values reconcile
+    /// in one snapshot: 32.7 W total - 15.0 W external = 17.7 W local.
+    static let previewLocalAndExternalBreakdown = SystemMetrics(
+        externalPower: true,
+        adapterLimitWatts: 20,
+        inputWatts: 12.6,
+        inputVoltage: 20,
+        inputCurrent: 0.63,
+        systemWatts: 32.7,
+        batteryWatts: -20.1,
+        batteryPercent: 68,
+        batteryTemperature: 33.4,
+        memoryPercent: 63,
+        gpuPercent: 36,
+        usbOutputs: [
+            USBPowerFlow(portIndex: 1, name: "iPad", watts: 15.0, voltage: 5.0, current: 3.0)
+        ],
+        gpuWatts: 4.4,
+        fanRPMs: [2_160],
+        gpuTemperature: 63.9
+    )
+
+    /// Positive power currently leaving the Mac through measured USB-C ports.
+    var externalOutputWatts: Double {
+        usbOutputs.reduce(0) { partial, output in
+            partial + max(0, output.watts.isFinite ? output.watts : 0)
+        }
+    }
+
+    /// Power consumed by the Mac itself, excluding power forwarded to attached
+    /// devices. Both terms come from this same telemetry snapshot.
+    var localComputerWatts: Double? {
+        guard let wholeMachine = systemWatts ?? sourceWatts,
+              wholeMachine.isFinite else { return nil }
+        return max(0, wholeMachine - externalOutputWatts)
+    }
+
+    /// Positive contribution from the battery to the active load.
+    var batterySupplyWatts: Double {
+        guard let batteryWatts, batteryWatts.isFinite else { return 0 }
+        return max(0, -batteryWatts)
+    }
+
+    /// Positive power currently being stored in the battery.
+    var batteryChargeWatts: Double {
+        guard let batteryWatts, batteryWatts.isFinite else { return 0 }
+        return max(0, batteryWatts)
+    }
 
     var sourceWatts: Double? {
         if externalPower {
@@ -132,6 +388,9 @@ enum SystemMetricsReader {
 
         let performance = dictionary(gpu["PerformanceStatistics"])
         let gpuPercent = gpuUsagePercent(performance)
+        let hardwarePower = PowerTelemetrySampler.shared.read()
+        let fanRPMs = readFanRPMs()
+        let gpuTemperature = readGPUTemperature()
 
         return SystemMetrics(
             externalPower: externalPower,
@@ -148,8 +407,32 @@ enum SystemMetricsReader {
             usbOutputs: decodePowerOutputs(
                 raw: battery["PowerOutDetails"],
                 usbDevices: usbDevices()
-            )
+            ),
+            cpuWatts: hardwarePower.cpuWatts,
+            gpuWatts: hardwarePower.gpuWatts,
+            processPower: hardwarePower.processes,
+            fanRPMs: fanRPMs,
+            gpuTemperature: gpuTemperature
         )
+    }
+
+    private static func readFanRPMs() -> [Double] {
+        var values = [Double](repeating: 0, count: 4)
+        let count = values.withUnsafeMutableBufferPointer { buffer in
+            Int(bcpt_read_fan_rpms(buffer.baseAddress, Int32(buffer.count)))
+        }
+        guard count > 0 else { return [] }
+        return Array(values.prefix(min(count, values.count)))
+            .filter { $0.isFinite && $0 >= 0 }
+    }
+
+    private static func readGPUTemperature() -> Double? {
+        var value = 0.0
+        guard bcpt_read_gpu_temperature(&value) == 1,
+              value.isFinite,
+              value > 10,
+              value < 150 else { return nil }
+        return value
     }
 
     static func decodePowerOutputs(raw: Any?, usbDevices: [USBDeviceDescriptor]) -> [USBPowerFlow] {
@@ -292,6 +575,62 @@ enum SystemMetricsReader {
 
     private static func boolean(_ value: Any?) -> Bool? {
         (value as? NSNumber)?.boolValue
+    }
+}
+
+/// Serializes access to the cumulative IOReport subscription. The controller
+/// reads once per second, so each call advances a single well-defined baseline.
+final class PowerTelemetrySampler: @unchecked Sendable {
+    static let shared = PowerTelemetrySampler()
+
+    private let lock = NSLock()
+    private var sampler: OpaquePointer?
+
+    private init() {
+        sampler = bcpt_sampler_create()
+    }
+
+    deinit {
+        if let sampler {
+            bcpt_sampler_destroy(sampler)
+        }
+    }
+
+    func read() -> HardwarePowerSample {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let sampler else { return .unavailable }
+
+        var cpuWatts = 0.0
+        var gpuWatts = 0.0
+        var hasCPU = false
+        var hasGPU = false
+        let hasDelta = bcpt_sampler_read(
+            sampler,
+            &cpuWatts,
+            &hasCPU,
+            &gpuWatts,
+            &hasGPU
+        ) != 0
+        guard hasDelta else { return .unavailable }
+
+        let processCount = max(0, Int(bcpt_sampler_process_count(sampler)))
+        let processes = (0..<processCount).compactMap { index -> ProcessPowerSample? in
+            guard let rawName = bcpt_sampler_process_name(sampler, Int32(index)) else {
+                return nil
+            }
+            let watts = bcpt_sampler_process_watts(sampler, Int32(index))
+            guard watts.isFinite, watts >= 0.001 else { return nil }
+            return ProcessPowerSample(
+                name: String(cString: rawName),
+                billedWatts: watts
+            )
+        }
+        return HardwarePowerSample(
+            cpuWatts: hasCPU && cpuWatts.isFinite ? cpuWatts : nil,
+            gpuWatts: hasGPU && gpuWatts.isFinite ? gpuWatts : nil,
+            processes: processes
+        )
     }
 }
 
@@ -576,8 +915,19 @@ final class SystemDetailStripView: NSView {
 }
 
 @MainActor
+enum PowerFlowStyle: String, CaseIterable {
+    case alDente
+    case ribbon
+    case capsule
+    case neon
+    case minimal
+}
+
 final class PowerFlowView: NSView {
     var metrics = SystemMetrics.unavailable {
+        didSet { needsDisplay = true }
+    }
+    var style: PowerFlowStyle = .ribbon {
         didSet { needsDisplay = true }
     }
     private(set) var isAnimating = false
@@ -659,60 +1009,189 @@ final class PowerFlowView: NSView {
     }
 
     private func drawPowerTopology() {
-        let source = NSRect(x: 12, y: 150, width: 84, height: 126)
-        let system = NSRect(x: 152, y: 182, width: 84, height: 82)
-        let battery = NSRect(x: 284, y: 268, width: 94, height: 64)
+        if style == .alDente {
+            drawAlDenteTopology()
+            return
+        }
+        let charger = NSPoint(x: 64, y: 212)
+        let system = NSPoint(x: 194, y: 156)
+        let battery = NSPoint(x: 194, y: 260)
 
         let inputPower = metrics.inputWatts ?? metrics.sourceWatts
-        drawNode(source, color: sourceColor, symbol: sourceSymbol, title: sourceNodeTitle, value: sourceNodeValue)
-        drawFlow(
-            from: NSPoint(x: source.maxX, y: 219),
-            to: NSPoint(x: system.minX, y: 218),
-            color: metrics.externalPower ? .systemYellow : .systemGreen,
-            power: inputPower,
-            label: watts(inputPower)
-        )
-        drawNode(system, color: .systemBlue, symbol: "laptopcomputer", title: "Mac 整机", value: nil)
-
         let batteryPower = metrics.batteryWatts ?? 0
         let batteryReversed = batteryPower < -0.05
-        let batteryColor: NSColor = batteryReversed ? .systemOrange : .systemGreen
+        let batteryFlowColor: NSColor = batteryReversed ? .systemOrange : .systemGreen
+        let batteryStart = batteryReversed
+            ? NSPoint(x: 190, y: 232)
+            : NSPoint(x: 190, y: 186)
+        let batteryEnd = batteryReversed
+            ? NSPoint(x: 190, y: 186)
+            : NSPoint(x: 190, y: 232)
+
+        let outputs = Array(metrics.usbOutputs.prefix(3))
+        let centers: [NSPoint] = outputs.count == 1
+            ? [NSPoint(x: 332, y: 176)]
+            : (outputs.count == 2
+                ? [NSPoint(x: 332, y: 210), NSPoint(x: 332, y: 142)]
+                : [NSPoint(x: 332, y: 236), NSPoint(x: 332, y: 176), NSPoint(x: 332, y: 116)])
+
+        drawFlow(
+            from: NSPoint(x: 76, y: 212),
+            to: NSPoint(x: 158, y: 164),
+            color: metrics.externalPower ? .systemYellow : .systemGreen,
+            power: inputPower,
+            label: watts(inputPower),
+            arc: 26
+        )
         if metrics.externalPower {
             drawFlow(
-                from: NSPoint(x: system.maxX, y: 238),
-                to: NSPoint(x: battery.minX, y: 300),
-                color: batteryColor,
+                from: batteryStart,
+                to: batteryEnd,
+                color: batteryFlowColor,
                 power: abs(batteryPower),
-                reversed: batteryReversed,
-                label: batteryFlowValue
-            )
-            drawNode(
-                battery,
-                color: batteryColor,
-                symbol: batteryReversed ? "battery.25percent" : "battery.75percent",
-                title: metrics.batteryPercent.map { "电池 \($0)%" } ?? "电池",
-                value: batteryFlowStatus
+                label: batteryFlowValue,
+                arc: 28
             )
         }
 
-        let outputs = Array(metrics.usbOutputs.prefix(3))
-        let yPositions: [CGFloat] = outputs.count == 1 ? [178] : (outputs.count == 2 ? [206, 150] : [214, 164, 116])
         for (index, output) in outputs.enumerated() {
-            let rect = NSRect(x: 284, y: yPositions[index], width: 94, height: 54)
+            let center = centers[index]
             drawFlow(
-                from: NSPoint(x: system.maxX, y: system.midY - CGFloat(index) * 8),
-                to: NSPoint(x: rect.minX, y: rect.midY),
+                from: NSPoint(x: 224, y: system.y - CGFloat(index) * 8),
+                to: NSPoint(x: 312, y: center.y),
                 color: .systemTeal,
                 power: output.watts,
-                label: watts(output.watts)
+                label: watts(output.watts),
+                arc: 20
             )
-            drawNode(
-                rect,
+        }
+
+        drawIconNode(
+            center: charger,
+            icon: sourceSymbol,
+            color: sourceColor,
+            primary: sourceNodeValue,
+            secondary: metrics.externalPower ? "充电器" : "电池供电"
+        )
+        drawIconNode(center: system, icon: "laptopcomputer", color: .systemBlue, secondary: "Mac 整机")
+        if metrics.externalPower {
+            drawIconNode(
+                center: battery,
+                icon: batteryReversed ? "battery.25percent" : "battery.75percent",
+                color: batteryFlowColor,
+                primary: batteryFlowStatus,
+                secondary: metrics.batteryPercent.map { "电池 \($0)%" } ?? "电池"
+            )
+        }
+        for (index, output) in outputs.enumerated() {
+            let center = centers[index]
+            drawIconNode(
+                center: center,
+                icon: deviceSymbol(for: output.name),
                 color: .systemTeal,
-                symbol: deviceSymbol(for: output.name),
-                title: output.name,
-                value: nil
+                secondary: output.name
             )
+        }
+    }
+
+    private func drawAlDenteTopology() {
+        let inputPower = metrics.inputWatts ?? metrics.sourceWatts
+        let batteryPower = metrics.batteryWatts ?? 0
+        let batteryReversed = batteryPower < -0.05
+        let batteryFlowColor: NSColor = batteryReversed ? .systemOrange : .systemGreen
+        let outputs = Array(metrics.usbOutputs.prefix(3))
+
+        // Top battery band, like AlDente's green charge bar
+        let barRect = NSRect(x: 24, y: 300, width: 342, height: 26)
+        let barPath = NSBezierPath(roundedRect: barRect, xRadius: 13, yRadius: 13)
+        batteryFlowColor.withAlphaComponent(0.92).setFill()
+        barPath.fill()
+        drawText(
+            metrics.batteryPercent.map { "\($0)%" } ?? "--%",
+            in: NSRect(x: 36, y: 303, width: 56, height: 18),
+            font: .monospacedDigitSystemFont(ofSize: 12, weight: .bold),
+            color: .white,
+            alignment: .left
+        )
+        if metrics.externalPower {
+            drawText(
+                batteryFlowStatus,
+                in: NSRect(x: 220, y: 305, width: 138, height: 16),
+                font: .systemFont(ofSize: 10, weight: .semibold),
+                color: .white,
+                alignment: .right
+            )
+        }
+
+        // Charger node: bottom-left
+        let chargerPoint = NSPoint(x: 68, y: 148)
+        drawIconNode(
+            center: NSPoint(x: 34, y: 148),
+            icon: sourceSymbol,
+            color: sourceColor,
+            primary: sourceNodeValue,
+            secondary: metrics.externalPower ? "充电器" : "电池供电"
+        )
+
+        // Main vertical ribbon from charger up to the system junction
+        let junction = NSPoint(x: 138, y: 258)
+        drawFlow(
+            from: chargerPoint,
+            to: junction,
+            color: metrics.externalPower ? .systemYellow : .systemGreen,
+            power: inputPower,
+            label: nil,
+            arc: 42
+        )
+        let topPoint = bezierMidpoint(from: chargerPoint, to: junction, t: 0.76, arc: 42)
+        drawText(
+            watts(inputPower),
+            in: NSRect(x: topPoint.x - 40, y: topPoint.y - 8, width: 80, height: 16),
+            font: .monospacedDigitSystemFont(ofSize: 11, weight: .bold),
+            color: .labelColor,
+            alignment: .center
+        )
+        if metrics.externalPower {
+            let bottomPoint = bezierMidpoint(from: chargerPoint, to: junction, t: 0.34, arc: 42)
+            drawText(
+                batteryFlowValue,
+                in: NSRect(x: bottomPoint.x - 40, y: bottomPoint.y - 8, width: 80, height: 16),
+                font: .monospacedDigitSystemFont(ofSize: 11, weight: .bold),
+                color: .labelColor,
+                alignment: .center
+            )
+        }
+
+        // Mac node at the junction
+        drawIconNode(center: junction, icon: "laptopcomputer", color: .systemBlue, secondary: "Mac 整机")
+
+        // Devices on the right
+        let centers: [NSPoint] = outputs.count == 1
+            ? [NSPoint(x: 348, y: 205)]
+            : (outputs.count == 2
+                ? [NSPoint(x: 348, y: 232), NSPoint(x: 348, y: 178)]
+                : [NSPoint(x: 348, y: 250), NSPoint(x: 348, y: 205), NSPoint(x: 348, y: 160)])
+        for (index, output) in outputs.enumerated() {
+            let center = centers[index]
+            let flowStart = NSPoint(x: 172, y: junction.y - CGFloat(index) * 16)
+            let flowEnd = NSPoint(x: 318, y: center.y)
+            drawFlow(
+                from: flowStart,
+                to: flowEnd,
+                color: .systemTeal,
+                power: output.watts,
+                label: nil,
+                arc: 26
+            )
+            let labelPoint = bezierMidpoint(from: flowStart, to: flowEnd, t: 0.44, arc: 26)
+            drawText(
+                watts(output.watts),
+                in: NSRect(x: labelPoint.x - 34, y: labelPoint.y - 8, width: 68, height: 16),
+                font: .monospacedDigitSystemFont(ofSize: 10.5, weight: .bold),
+                color: .labelColor,
+                alignment: .center
+            )
+            drawIconNode(center: center, icon: deviceSymbol(for: output.name), color: .systemTeal, secondary: output.name)
         }
     }
 
@@ -724,14 +1203,9 @@ final class PowerFlowView: NSView {
         metrics.externalPower ? "powerplug.fill" : "battery.75percent"
     }
 
-    private var sourceNodeTitle: String {
-        if metrics.externalPower { return "充电器" }
-        return metrics.batteryPercent.map { "电池 \($0)%" } ?? "电池供电"
-    }
-
     private var sourceNodeValue: String {
         if metrics.externalPower {
-            return metrics.adapterLimitWatts.map { "上限 \(Int($0.rounded()))W" } ?? ""
+            return metrics.adapterLimitWatts.map { "\(Int($0.rounded()))W" } ?? watts(metrics.inputWatts)
         }
         guard let power = metrics.batteryWatts else { return "-- W" }
         if power < -0.05 { return String(format: "−%.1f W", abs(power)) }
@@ -796,9 +1270,9 @@ final class PowerFlowView: NSView {
     }
 
     private func drawStatusCards() {
-        let cardWidth: CGFloat = 114
-        let gap: CGFloat = 6
-        let cardHeight: CGFloat = 48
+        let cardWidth: CGFloat = 120
+        let gap: CGFloat = 8
+        let cardHeight: CGFloat = 44
         let y: CGFloat = 48
         let cards: [(icon: String, title: String, value: String, sub: String, color: NSColor)] = [
             ("thermometer.medium", "散热", temperatureValue, "电池温度", .systemOrange),
@@ -806,7 +1280,7 @@ final class PowerFlowView: NSView {
             ("bolt.fill", "整机功耗", watts(metrics.systemWatts ?? metrics.sourceWatts), "系统负载", .systemTeal)
         ]
         for (index, card) in cards.enumerated() {
-            let x = 14 + CGFloat(index) * (cardWidth + gap)
+            let x = 8 + CGFloat(index) * (cardWidth + gap)
             drawStatusCard(
                 x: x,
                 y: y,
@@ -833,38 +1307,30 @@ final class PowerFlowView: NSView {
         color: NSColor
     ) {
         let rect = NSRect(x: x, y: y, width: width, height: height)
-        color.withAlphaComponent(0.13).setFill()
-        let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
-        path.fill()
-        color.withAlphaComponent(0.40).setStroke()
-        path.lineWidth = 0.7
-        path.stroke()
-
         if let image = NSImage(systemSymbolName: icon, accessibilityDescription: title) {
             let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
                 .applying(NSImage.SymbolConfiguration(hierarchicalColor: color))
             image.withSymbolConfiguration(configuration)?
-                .draw(in: NSRect(x: rect.minX + 8, y: rect.maxY - 18, width: 11, height: 11))
+                .draw(in: NSRect(x: rect.minX, y: rect.maxY - 14, width: 11, height: 11))
         }
         drawText(
             title,
-            in: NSRect(x: rect.minX + 22, y: rect.maxY - 20, width: 48, height: 13),
+            in: NSRect(x: rect.minX + 15, y: rect.maxY - 16, width: 52, height: 13),
             font: .systemFont(ofSize: 8.5, weight: .medium),
             color: .secondaryLabelColor
         )
         drawText(
             sub,
-            in: NSRect(x: rect.maxX - 58, y: rect.maxY - 20, width: 52, height: 13),
+            in: NSRect(x: rect.minX + 15, y: rect.maxY - 30, width: 60, height: 11),
             font: .systemFont(ofSize: 7.5, weight: .medium),
-            color: .tertiaryLabelColor,
-            alignment: .right
+            color: .tertiaryLabelColor
         )
         drawText(
             value,
-            in: NSRect(x: rect.minX + 8, y: rect.minY + 3, width: rect.width - 16, height: 19),
+            in: NSRect(x: rect.minX, y: rect.minY + 2, width: rect.width - 10, height: 19),
             font: .monospacedDigitSystemFont(ofSize: 12.5, weight: .bold),
             color: .labelColor,
-            alignment: .center
+            alignment: .left
         )
     }
 
@@ -885,14 +1351,16 @@ final class PowerFlowView: NSView {
         color: NSColor,
         power: Double?,
         reversed: Bool = false,
-        label: String? = nil
+        label: String? = nil,
+        arc: CGFloat = 24
     ) {
+        let controls = flowControls(from: start, to: end, arc: arc)
         let path = NSBezierPath()
         path.move(to: start)
         path.curve(
             to: end,
-            controlPoint1: NSPoint(x: start.x + 58, y: start.y),
-            controlPoint2: NSPoint(x: end.x - 58, y: end.y)
+            controlPoint1: controls.0,
+            controlPoint2: controls.1
         )
         guard let power, power > 0.05 else {
             path.lineWidth = 2.5
@@ -901,92 +1369,253 @@ final class PowerFlowView: NSView {
             NSColor.secondaryLabelColor.withAlphaComponent(0.22).setStroke()
             path.stroke()
             if let label {
-                drawFlowLabel(label, from: start, to: end)
+                drawFlowLabel(label, from: start, to: end, color: color, arc: arc)
             }
             return
         }
-        let streamWidth = min(11, max(2.4, 2.0 + CGFloat(power) * 0.14))
-        path.lineWidth = streamWidth + 9
-        path.lineCapStyle = .round
-        color.withAlphaComponent(0.18).setStroke()
-        path.stroke()
+        let bandWidth = min(34, max(4, 3.5 + CGFloat(power) * 0.38))
+        if style == .minimal {
+            path.lineWidth = 2.5
+            path.lineCapStyle = .round
+            color.withAlphaComponent(0.75).setStroke()
+            path.stroke()
+            drawTrickles(
+                from: start,
+                to: end,
+                arc: arc,
+                bandWidth: 3,
+                power: power,
+                reversed: reversed
+            )
+        } else if style == .neon {
+            path.lineWidth = bandWidth + 18
+            path.lineCapStyle = .round
+            color.withAlphaComponent(0.16).setStroke()
+            path.stroke()
+            path.lineWidth = bandWidth + 9
+            color.withAlphaComponent(0.38).setStroke()
+            path.stroke()
+            let core = path.copy() as! NSBezierPath
+            core.lineWidth = bandWidth
+            core.lineCapStyle = .round
+            color.withAlphaComponent(0.95).setStroke()
+            core.stroke()
+            drawTrickles(
+                from: start,
+                to: end,
+                arc: arc,
+                bandWidth: bandWidth,
+                power: power,
+                reversed: reversed
+            )
+        } else {
+            // Soft outer halo + solid saturated ribbon (AlDente look)
+            path.lineWidth = bandWidth + 9
+            path.lineCapStyle = .round
+            color.withAlphaComponent(0.22).setStroke()
+            path.stroke()
 
-        let direction: CGFloat = reversed ? -1 : 1
-        let phase = Self.dashPhase(for: power, frame: flowPhase, reversed: reversed)
-        let stream = path.copy() as! NSBezierPath
-        stream.lineWidth = streamWidth
-        stream.lineCapStyle = .round
-        stream.setLineDash([15, 10], count: 2, phase: phase)
-        color.withAlphaComponent(0.92).setStroke()
-        stream.stroke()
-        let glint = path.copy() as! NSBezierPath
-        glint.lineWidth = 1.4
-        glint.lineCapStyle = .round
-        glint.setLineDash([3, 22], count: 2, phase: phase + 6 * direction)
-        NSColor.labelColor.withAlphaComponent(0.72).setStroke()
-        glint.stroke()
+            let core = path.copy() as! NSBezierPath
+            core.lineWidth = bandWidth
+            core.lineCapStyle = .round
+            color.withAlphaComponent(0.92).setStroke()
+            core.stroke()
+
+            let edge = path.copy() as! NSBezierPath
+            edge.lineWidth = max(1.2, bandWidth * 0.10)
+            edge.lineCapStyle = .round
+            color.withAlphaComponent(0.35).setStroke()
+            edge.stroke()
+
+            drawTrickles(
+                from: start,
+                to: end,
+                arc: arc,
+                bandWidth: bandWidth,
+                power: power,
+                reversed: reversed
+            )
+        }
 
         if let label {
-            drawFlowLabel(label, from: start, to: end)
+            drawFlowLabel(label, from: start, to: end, color: color, arc: arc)
         }
     }
 
-    private func drawFlowLabel(_ text: String, from start: NSPoint, to end: NSPoint) {
-        let point = bezierMidpoint(from: start, to: end, t: 0.52)
+    private func drawTrickles(
+        from start: NSPoint,
+        to end: NSPoint,
+        arc: CGFloat,
+        bandWidth: CGFloat,
+        power: Double,
+        reversed: Bool
+    ) {
+        let direction: CGFloat = reversed ? -1 : 1
+        let count = max(3, min(6, Int(power / 12) + 3))
+        let step = 1.0 / CGFloat(count)
+        let radius = max(2.0, bandWidth * 0.14)
+        let speed = Self.flowSpeed(for: power)
+        let offset = (flowPhase * 0.008 * speed * direction)
+        for i in 0..<count {
+            var t = (CGFloat(i) * step + offset).truncatingRemainder(dividingBy: 1)
+            if t < 0 { t += 1 }
+            let p = bezierMidpoint(from: start, to: end, t: t, arc: arc)
+            let glow = NSBezierPath(ovalIn: NSRect(x: p.x - radius * 1.8, y: p.y - radius * 1.8, width: radius * 3.6, height: radius * 3.6))
+            NSColor.white.withAlphaComponent(0.28).setFill()
+            glow.fill()
+            let dot = NSBezierPath(ovalIn: NSRect(x: p.x - radius, y: p.y - radius, width: radius * 2, height: radius * 2))
+            NSColor.white.withAlphaComponent(0.85).setFill()
+            dot.fill()
+        }
+    }
+
+    private func drawFlowLabel(_ text: String, from start: NSPoint, to end: NSPoint, color: NSColor, arc: CGFloat) {
+        let point = bezierMidpoint(from: start, to: end, t: 0.5, arc: arc)
         let width: CGFloat = text.count > 6 ? 62 : 56
-        let rect = NSRect(x: point.x - width / 2, y: point.y - 9, width: width, height: 18)
-        NSColor.controlBackgroundColor.withAlphaComponent(0.86).setFill()
-        let labelPath = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
-        labelPath.fill()
-        labelPath.lineWidth = 0.6
-        NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
-        labelPath.stroke()
         drawText(
             text,
-            in: NSRect(x: rect.minX + 3, y: rect.minY + 2, width: rect.width - 6, height: 14),
-            font: .monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
+            in: NSRect(x: point.x - width / 2, y: point.y - 8, width: width, height: 16),
+            font: .monospacedDigitSystemFont(ofSize: 10, weight: .bold),
             color: .labelColor,
             alignment: .center
         )
     }
 
-    private func bezierMidpoint(from start: NSPoint, to end: NSPoint, t: CGFloat) -> NSPoint {
-        let control1 = NSPoint(x: start.x + 58, y: start.y)
-        let control2 = NSPoint(x: end.x - 58, y: end.y)
+    private func flowControls(from start: NSPoint, to end: NSPoint, arc: CGFloat) -> (NSPoint, NSPoint) {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        if abs(dx) >= abs(dy) {
+            let horizontal = min(46, max(24, abs(dx) * 0.45))
+            let direction: CGFloat = dx >= 0 ? 1 : -1
+            let bow: CGFloat = -abs(arc)
+            return (
+                NSPoint(x: start.x + horizontal * direction, y: start.y + bow),
+                NSPoint(x: end.x - horizontal * direction, y: end.y + bow)
+            )
+        }
+        return (
+            NSPoint(x: start.x + arc, y: start.y),
+            NSPoint(x: end.x - arc, y: end.y)
+        )
+    }
+
+    private func bezierMidpoint(from start: NSPoint, to end: NSPoint, t: CGFloat, arc: CGFloat) -> NSPoint {
+        let controls = flowControls(from: start, to: end, arc: arc)
         let u = 1 - t
-        let x = u * u * u * start.x + 3 * u * u * t * control1.x + 3 * u * t * t * control2.x + t * t * t * end.x
-        let y = u * u * u * start.y + 3 * u * u * t * control1.y + 3 * u * t * t * control2.y + t * t * t * end.y
+        let x = u * u * u * start.x + 3 * u * u * t * controls.0.x + 3 * u * t * t * controls.1.x + t * t * t * end.x
+        let y = u * u * u * start.y + 3 * u * u * t * controls.0.y + 3 * u * t * t * controls.1.y + t * t * t * end.y
         return NSPoint(x: x, y: y)
     }
 
-    private func drawNode(_ rect: NSRect, color: NSColor, symbol: String, title: String, value: String?) {
-        color.withAlphaComponent(0.14).setFill()
-        let path = NSBezierPath(roundedRect: rect, xRadius: 13, yRadius: 13)
-        path.fill()
-
-        let iconSize: CGFloat = 17
-        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: title) {
-            let configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-                .applying(NSImage.SymbolConfiguration(hierarchicalColor: color))
-            image.withSymbolConfiguration(configuration)?
-                .draw(in: NSRect(x: rect.midX - iconSize / 2, y: rect.maxY - iconSize - 7, width: iconSize, height: iconSize))
+    private func drawIconNode(
+        center: NSPoint,
+        icon: String,
+        color: NSColor,
+        primary: String? = nil,
+        secondary: String? = nil
+    ) {
+        if style == .capsule {
+            drawCapsuleNode(center: center, icon: icon, color: color, primary: primary, secondary: secondary)
+            return
         }
-        drawText(
-            title,
-            in: NSRect(x: rect.minX + 5, y: rect.maxY - iconSize - 24, width: rect.width - 10, height: 16),
-            font: .systemFont(ofSize: 9, weight: .medium),
-            color: .secondaryLabelColor,
-            alignment: .center
-        )
-        if let value {
+        if style == .minimal {
+            let size: CGFloat = 14
+            if let image = symbolImage(icon, pointSize: 11, color: .secondaryLabelColor) {
+                image.draw(in: NSRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size))
+            }
+            if let primary {
+                drawText(
+                    primary,
+                    in: NSRect(x: center.x - 60, y: center.y - 22, width: 120, height: 15),
+                    font: .monospacedDigitSystemFont(ofSize: 11, weight: .bold),
+                    color: .labelColor,
+                    alignment: .center
+                )
+            }
+            if let secondary {
+                drawText(
+                    secondary,
+                    in: NSRect(x: center.x - 60, y: center.y - 37, width: 120, height: 12),
+                    font: .systemFont(ofSize: 8, weight: .regular),
+                    color: .secondaryLabelColor,
+                    alignment: .center
+                )
+            }
+            return
+        }
+        let size: CGFloat = 18
+        if let image = symbolImage(icon, pointSize: 14, color: color) {
+            image.draw(in: NSRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size))
+        }
+        if let primary {
             drawText(
-                value,
-                in: NSRect(x: rect.minX + 5, y: rect.minY + 4, width: rect.width - 10, height: 18),
-                font: .monospacedDigitSystemFont(ofSize: 11.5, weight: .bold),
+                primary,
+                in: NSRect(x: center.x - 60, y: center.y - 24, width: 120, height: 14),
+                font: .monospacedDigitSystemFont(ofSize: 10, weight: .bold),
                 color: .labelColor,
                 alignment: .center
             )
         }
+        if let secondary {
+            drawText(
+                secondary,
+                in: NSRect(x: center.x - 60, y: center.y - 39, width: 120, height: 12),
+                font: .systemFont(ofSize: 8.5, weight: .medium),
+                color: .secondaryLabelColor,
+                alignment: .center
+            )
+        }
+    }
+
+    private func drawCapsuleNode(
+        center: NSPoint,
+        icon: String,
+        color: NSColor,
+        primary: String?,
+        secondary: String?
+    ) {
+        let capsuleWidth: CGFloat = primary == nil ? 44 : 74
+        let capsuleHeight: CGFloat = 26
+        let rect = NSRect(x: center.x - capsuleWidth / 2, y: center.y - capsuleHeight / 2, width: capsuleWidth, height: capsuleHeight)
+        let path = NSBezierPath(roundedRect: rect, xRadius: capsuleHeight / 2, yRadius: capsuleHeight / 2)
+        color.withAlphaComponent(0.92).setFill()
+        path.fill()
+        color.withAlphaComponent(0.35).setStroke()
+        path.lineWidth = 0.7
+        path.stroke()
+
+        if let primary {
+            if let image = symbolImage(icon, pointSize: 11, color: .white) {
+                image.draw(in: NSRect(x: rect.minX + 9, y: center.y - 6, width: 12, height: 12))
+            }
+            drawText(
+                primary,
+                in: NSRect(x: rect.minX + 24, y: center.y - 8, width: rect.width - 28, height: 16),
+                font: .monospacedDigitSystemFont(ofSize: 10, weight: .bold),
+                color: .white,
+                alignment: .left
+            )
+        } else {
+            if let image = symbolImage(icon, pointSize: 13, color: .white) {
+                image.draw(in: NSRect(x: center.x - 7, y: center.y - 7, width: 14, height: 14))
+            }
+        }
+        if let secondary {
+            drawText(
+                secondary,
+                in: NSRect(x: center.x - 60, y: center.y - capsuleHeight / 2 - 17, width: 120, height: 12),
+                font: .systemFont(ofSize: 8.5, weight: .medium),
+                color: .secondaryLabelColor,
+                alignment: .center
+            )
+        }
+    }
+
+    private func symbolImage(_ name: String, pointSize: CGFloat, color: NSColor) -> NSImage? {
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return nil }
+        let configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        return image.withSymbolConfiguration(configuration)
     }
 
     private func watts(_ value: Double?) -> String {
