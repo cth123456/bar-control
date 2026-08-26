@@ -648,13 +648,21 @@ final class RemoteControlManager {
                         )
                         let newThreadID = try await appServer.startTurn(command: fallback)
                         rememberThread(newThreadID)
+                        // 把按会话模型覆盖一起带到新会话，否则后续消息会退回全局默认模型。
+                        if let modelID = executableCommand.modelID {
+                            threadModelOverrides[newThreadID] = modelID
+                            persistThreadModelOverrides()
+                        }
                         _ = try await eventStore.append(
                             sessionID: command.id.uuidString,
                             kind: .actionProgress,
                             title: "已切换新会话",
                             text: "原会话正在桌面端运行，无法从手机续写；消息已在新会话中继续",
                             threadID: newThreadID,
-                            metadata: ["originalThreadID": executableCommand.threadID ?? ""]
+                            metadata: [
+                                "originalThreadID": executableCommand.threadID ?? "",
+                                "modelID": executableCommand.modelID ?? ""
+                            ]
                         )
                         statusText = "已在新会话继续（原会话在桌面端运行）"
                         notifyChange()

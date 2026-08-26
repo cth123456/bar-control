@@ -239,8 +239,21 @@ final class RemoteViewModel: ObservableObject {
     var threadDisplayItems: [RemoteDisplayItem] {
         guard let selectedThreadID else { return [] }
         var items = historyItems(for: selectedThreadID)
-        items.append(contentsOf: displayItems.filter { $0.threadID == selectedThreadID })
+        // 会话内只保留真正的聊天内容（用户/助手/真实错误）；模型切换、进度、修复等
+        // 状态事件不再长期挂在对话里，避免“提示已切换”之类的噪音一直留在底部。
+        items.append(contentsOf: displayItems.filter {
+            $0.threadID == selectedThreadID && Self.isChatItem($0.kind)
+        })
         return items
+    }
+
+    private static func isChatItem(_ kind: RemoteEventKind) -> Bool {
+        switch kind {
+        case .userInput, .agentMessageDelta, .turnFailed, .error:
+            return true
+        default:
+            return false
+        }
     }
 
     private func historyItems(for threadID: String) -> [RemoteDisplayItem] {
@@ -775,13 +788,13 @@ final class RemoteViewModel: ObservableObject {
             if let threadID = event.threadID, !threadID.isEmpty {
                 selectedThreadID = threadID
             }
-            switchNotice = "已切换到 \(event.text)，账号和模型已自动匹配，继续使用原会话"
+            showSwitchNotice("已切换到 \(event.text)，账号和模型已自动匹配，继续使用原会话")
         }
         if event.title == "原会话已匹配" {
             if let threadID = event.threadID, !threadID.isEmpty {
                 selectedThreadID = threadID
             }
-            switchNotice = event.text
+            showSwitchNotice(event.text)
         }
         if event.kind == .providerChanged, !event.text.isEmpty {
             currentProviderName = event.text
@@ -815,7 +828,7 @@ final class RemoteViewModel: ObservableObject {
             selectedThreadID = threadID
             isNewConversation = false
             selectedConversationTitle = "新会话（原会话在桌面端运行）"
-            switchNotice = event.text
+            showSwitchNotice(event.text)
             loadingHistoryThreadID = threadID
             Task {
                 await sendCommand(type: .listThreads)
@@ -882,6 +895,16 @@ final class RemoteViewModel: ObservableObject {
     private static func folderName(from cwd: String) -> String {
         let trimmed = cwd.split(separator: "/").last.map(String.init) ?? ""
         return trimmed.isEmpty ? cwd : trimmed
+    }
+
+    /// 显示一次性提示横幅，10 秒后若未被新提示替换则自动消失。
+    private func showSwitchNotice(_ text: String) {
+        switchNotice = text
+        let current = text
+        Task {
+            try? await Task.sleep(for: .seconds(10))
+            if switchNotice == current { switchNotice = nil }
+        }
     }
 
     private static var deviceID: String {
