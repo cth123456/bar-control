@@ -21,6 +21,8 @@ final class RemoteControlManager {
     private var lastKnownProviderID: String?
     private var lastKnownModelID: String?
     private var threadModelOverrides: [String: String] = [:]
+    /// 桌面端占用的原会话 → 手机端自动新建的会话，保证后续消息继续在同一个新会话里。
+    private var fallbackThreadMap: [String: String] = [:]
 
     private(set) var events: [RemoteEvent] = []
     private(set) var providers: [RemoteProviderSummary] = []
@@ -702,6 +704,35 @@ final class RemoteControlManager {
                     // 桌面端 app-server 正持有该会话的写锁，任何第二个进程都无法续写同一 rollout。
                     // 此时不重试原会话（重试只会反复失败+重启），改在新会话里继续，并通知手机。
                     if error.localizedDescription.localizedCaseInsensitiveContains("active writer") {
+                        let originalThreadID = executableCommand.threadID ?? ""
+                        let newThreadID: String
+                        if let mapped = fallbackThreadMap[originalThreadID] {
+                            // 已为该原会话建过手机新会话，继续在同一个新会话里发，不再重复建。
+                            let continueCommand = RemoteCommand(
+                                id: executableCommand.id,
+                                createdAt: executableCommand.createdAt,
+                                sourceDeviceID: executableCommand.sourceDeviceID,
+                                type: .prompt,
+                                text: executableCommand.text,
+                                cwd: executableCommand.cwd,
+                                threadID: mapped,
+                                providerID: nil,
+                                modelID: executableCommand.modelID,
+                                approvalRequestID: nil
+                            )
+                            rememberThread(try await appServer.startTurn(command: continueCommand))
+                            _ = try await eventStore.append(
+                                sessionID: command.id.uuidString,
+                                kind: .actionProgress,
+                                title: "继续会话",
+                                text: "已在手机会话中继续（原会话在桌面端运行）",
+                                threadID: mapped,
+                                metadata: ["originalThreadID": originalThreadID]
+                            )
+                            statusText = "已在手机会话中继续"
+                            notifyChange()
+                            break
+                        }
                         let fallback = RemoteCommand(
                             id: executableCommand.id,
                             createdAt: executableCommand.createdAt,
@@ -714,7 +745,10 @@ final class RemoteControlManager {
                             modelID: executableCommand.modelID,
                             approvalRequestID: nil
                         )
-                        let newThreadID = try await appServer.startTurn(command: fallback)
+                        newThreadID = try await appServer.startTurn(command: fallback)
+                        if !originalThreadID.isEmpty {
+                            fallbackThreadMap[originalThreadID] = newThreadID
+                        }
                         rememberThread(newThreadID)
                         // 把按会话模型覆盖一起带到新会话，否则后续消息会退回全局默认模型。
                         if let modelID = executableCommand.modelID {
@@ -728,7 +762,7 @@ final class RemoteControlManager {
                             text: "原会话正在桌面端运行，无法从手机续写；消息已在新会话中继续",
                             threadID: newThreadID,
                             metadata: [
-                                "originalThreadID": executableCommand.threadID ?? "",
+                                "originalThreadID": originalThreadID,
                                 "modelID": executableCommand.modelID ?? ""
                             ]
                         )

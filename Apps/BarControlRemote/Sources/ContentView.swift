@@ -147,6 +147,17 @@ struct ContentView: View {
                     if let approval = model.pendingApproval {
                         approvalCard(approval)
                     }
+                    if let threadID = model.selectedThreadID,
+                       let notice = model.threadNotices[threadID] {
+                        Text(notice)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.orange.opacity(0.12), in: Capsule())
+                            .frame(maxWidth: .infinity)
+                    }
                     if model.threadDisplayItems.isEmpty && model.pendingMessagesForSelectedThread.isEmpty {
                         if model.selectedConversationIsActive {
                             ContentUnavailableView(
@@ -172,7 +183,20 @@ struct ContentView: View {
                             .padding(.top, 80)
                         }
                     } else {
-                        ForEach(model.threadDisplayItems) { item in
+                        ForEach(Array(model.threadDisplayItems.enumerated()), id: \.element.id) { index, item in
+                            if index == 0
+                                || !Calendar.current.isDate(
+                                    model.threadDisplayItems[index - 1].createdAt,
+                                    inSameDayAs: item.createdAt
+                                ) {
+                                Text(Self.dateLabel(item.createdAt))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Color.secondary.opacity(0.08), in: Capsule())
+                                    .frame(maxWidth: .infinity)
+                            }
                             MessageRow(item: item)
                                 .id(item.id)
                         }
@@ -180,6 +204,19 @@ struct ContentView: View {
                             PendingMessageRow(pending: pending)
                                 .id(pending.id)
                         }
+                    }
+                    if model.isTurnInProgress,
+                       model.threadDisplayItems.last?.kind != .agentMessageDelta,
+                       model.pendingMessagesForSelectedThread.isEmpty {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Codex 正在执行…")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 60)
+                        }
+                        .padding(.vertical, 4)
                     }
                     if !model.threadFiles.isEmpty {
                         fileSection
@@ -322,6 +359,14 @@ struct ContentView: View {
                 proxy.scrollTo(identifier, anchor: .bottom)
             }
         }
+    }
+
+    private static func dateLabel(_ date: Date) -> String {
+        if Calendar.current.isDateInToday(date) { return "今天" }
+        if Calendar.current.isDateInYesterday(date) { return "昨天" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M月d日"
+        return formatter.string(from: date)
     }
 
     private var providerMenu: some View {
@@ -581,11 +626,20 @@ private struct ConversationRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "bubble.left.and.text.bubble.right.fill")
-                .font(.system(size: 20))
-                .foregroundStyle(.blue)
-                .frame(width: 40, height: 40)
-                .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.blue, .purple],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Text(String(conversation.title.prefix(1)).uppercased())
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     if conversation.pinned {
@@ -659,18 +713,26 @@ private struct MessageRow: View {
 
     @ViewBuilder
     private var bubble: some View {
-        if (item.kind == .agentMessageDelta || item.kind == .localAssistantMessage),
-           item.isFinal,
-           let attributed = try? AttributedString(markdown: item.text) {
-            Text(attributed)
-                .font(.callout)
-                .textSelection(.enabled)
-        } else {
-            // 流式阶段用纯文本并去掉 markdown 符号，避免“**”之类乱码和每帧重解析卡顿；
-            // 回合结束后再整段渲染 markdown。
-            Text(Self.previewText(item))
-                .font(.callout)
-                .textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 3) {
+            if (item.kind == .agentMessageDelta || item.kind == .localAssistantMessage),
+               item.isFinal,
+               let attributed = try? AttributedString(markdown: item.text) {
+                Text(attributed)
+                    .font(.callout)
+                    .textSelection(.enabled)
+            } else {
+                // 流式阶段用纯文本并去掉 markdown 符号，避免“**”之类乱码和每帧重解析卡顿；
+                // 回合结束后再整段渲染 markdown。
+                Text(Self.previewText(item))
+                    .font(.callout)
+                    .textSelection(.enabled)
+            }
+            HStack {
+                Spacer()
+                Text(item.createdAt, style: .time)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

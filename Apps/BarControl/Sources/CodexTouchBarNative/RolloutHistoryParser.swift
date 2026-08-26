@@ -20,10 +20,14 @@ enum RolloutHistoryParser {
             else { return }
             let text = Self.text(from: payload["content"])
             guard !text.isEmpty else { return }
+            let timestamp = (object["timestamp"] as? String)
+                .flatMap { ISO8601DateFormatter().date(from: $0) }
+                .map { $0.timeIntervalSince1970 } ?? 0
             messages.append(.object([
                 "role": .string(role),
                 "text": .string(String(text.prefix(4000))),
-                "seq": .number(Double(seq))
+                "seq": .number(Double(seq)),
+                "ts": .number(timestamp)
             ]))
             seq += 1
             if messages.count > maxMessages {

@@ -137,6 +137,7 @@ final class RemoteViewModel: ObservableObject {
     @Published private(set) var isAwaitingResponse = false
     @Published private(set) var isSwitchingModel = false
     @Published private(set) var pendingMessages: [PendingMessage] = []
+    @Published private(set) var threadNotices: [String: String] = [:]
     @Published var showingLocalChat = false
     @Published var localModelName: String {
         didSet { UserDefaults.standard.set(localModelName, forKey: "remote.localModelName.v1") }
@@ -278,6 +279,16 @@ final class RemoteViewModel: ObservableObject {
 
     var pendingMessagesForLocalChat: [PendingMessage] {
         pendingMessages.filter { $0.threadID == RemoteControlConstants.localChatThreadID }
+    }
+
+    /// 当前会话是否有一个“已开始但尚未结束”的 turn（用于显示“正在执行…”）。
+    var isTurnInProgress: Bool {
+        guard let selectedThreadID else { return false }
+        guard let last = events.last(where: {
+            $0.threadID == selectedThreadID
+                && ($0.kind == .turnStarted || $0.kind == .turnCompleted || $0.kind == .turnFailed)
+        }) else { return false }
+        return last.kind == .turnStarted
     }
 
     var localChatItems: [RemoteDisplayItem] {
@@ -822,6 +833,7 @@ final class RemoteViewModel: ObservableObject {
         isSwitchingModel = false
         pendingMessages.removeAll()
         showingLocalChat = false
+        threadNotices.removeAll()
         filterProject = nil
         didRequestProviders = false
         try? FileManager.default.removeItem(at: Self.cacheURL)
@@ -955,11 +967,14 @@ final class RemoteViewModel: ObservableObject {
             }
             if !modelNames.contains(event.text) { modelNames.append(event.text) }
         }
-        if event.title == "已切换新会话",
+        if event.title == "已切换新会话" || event.title == "继续会话",
            let threadID = event.threadID, !threadID.isEmpty {
             selectedThreadID = threadID
             isNewConversation = false
-            selectedConversationTitle = "新会话（原会话在桌面端运行）"
+            if selectedConversationTitle.isEmpty || selectedConversationTitle == "远程 Codex" {
+                selectedConversationTitle = "手机会话"
+            }
+            threadNotices[threadID] = event.text
             showSwitchNotice(event.text)
             loadingHistoryThreadID = threadID
             Task {
@@ -1016,7 +1031,9 @@ final class RemoteViewModel: ObservableObject {
                 guard let role = item["role"] as? String,
                       let text = item["text"] as? String, !text.isEmpty else { continue }
                 let seq = (item["seq"] as? NSNumber)?.intValue ?? index
-                messages.append(RemoteThreadMessage(role: role, text: text, seq: seq))
+                let ts = (item["ts"] as? NSNumber)?.doubleValue ?? 0
+                let createdAt = ts > 0 ? Date(timeIntervalSince1970: ts) : Date()
+                messages.append(RemoteThreadMessage(role: role, text: text, seq: seq, createdAt: createdAt))
             }
             threadHistory[threadID] = Array(messages.suffix(200))
             if loadingHistoryThreadID == threadID { loadingHistoryThreadID = nil }
