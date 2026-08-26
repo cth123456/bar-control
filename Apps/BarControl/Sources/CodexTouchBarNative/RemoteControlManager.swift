@@ -5,6 +5,7 @@ import Foundation
 final class RemoteControlManager {
     private enum DefaultsKey {
         static let latestThreadID = "remoteControl.latestThreadID.v1"
+        static let threadModelOverrides = "remoteControl.threadModelOverrides.v1"
     }
 
     private let eventStore = RemoteEventStore()
@@ -19,6 +20,7 @@ final class RemoteControlManager {
     private var windowController: RemoteControlWindowController?
     private var lastKnownProviderID: String?
     private var lastKnownModelID: String?
+    private var threadModelOverrides: [String: String] = [:]
 
     private(set) var events: [RemoteEvent] = []
     private(set) var providers: [RemoteProviderSummary] = []
@@ -35,6 +37,9 @@ final class RemoteControlManager {
 
     func start() {
         guard startupTask == nil else { return }
+        threadModelOverrides = UserDefaults.standard.dictionary(
+            forKey: DefaultsKey.threadModelOverrides
+        ) as? [String: String] ?? [:]
         eventTask = Task { [weak self, eventStore] in
             let history = await eventStore.events(limit: 500)
             await MainActor.run {
@@ -406,15 +411,25 @@ final class RemoteControlManager {
                     text: list
                 )
             case .listThreads:
-                let summaries = await listThreadSummaries()
-                let data = try JSONSerialization.data(withJSONObject: summaries, options: [.sortedKeys])
-                let text = String(decoding: data, as: UTF8.self)
+                try await emitThreadListEvent(sessionID: command.id.uuidString)
+            case .setPinned:
+                guard let threadID = command.threadID else {
+                    throw CodexAppServerError.invalidResponse("置顶指令缺少会话 ID")
+                }
+                let pinned = command.text == "1"
+                let ok = await providerStore.setThreadPinned(threadID: threadID, pinned: pinned)
                 _ = try await eventStore.append(
                     sessionID: command.id.uuidString,
                     kind: .actionProgress,
-                    title: "Codex 会话列表",
-                    text: text
+                    title: ok ? (pinned ? "已置顶" : "已取消置顶") : "置顶失败",
+                    text: ok
+                        ? "会话 …\(threadID.suffix(8)) 的置顶状态已同步到 Codex"
+                        : "Codex 状态库暂时被占用，请稍后重试",
+                    threadID: threadID
                 )
+                if ok {
+                    try await emitThreadListEvent(sessionID: command.id.uuidString)
+                }
             case .healthCheck:
                 _ = try await appServer.listThreads(limit: 1)
                 _ = try await eventStore.append(
@@ -437,23 +452,32 @@ final class RemoteControlManager {
         notifyChange()
     }
 
-    /// 通过官方 app-server thread/list 读取最近会话摘要（id/title/preview/model/updated_ms），
+    /// 通过官方 app-server thread/list 读取最近会话摘要，合并桌面端置顶/按会话模型信息，
     /// 供手机端展示历史会话列表。带 5 秒兜底，避免 app-server 无响应时卡死中继指令循环。
     private func listThreadSummaries() async -> [[String: Any]] {
         let payload: ThreadListPayload = await withTaskGroup(of: ThreadListPayload.self) { group in
             group.addTask {
                 do {
                     let result = try await self.appServer.listThreads(limit: 50)
+                    let extras = await self.providerStore.threadExtras()
                     var summaries: [[String: Any]] = []
                     for item in (result["data"]?.arrayValue ?? []) {
                         guard let id = item["id"]?.stringValue, !id.isEmpty else { continue }
                         let updatedAt = item["updatedAt"]?.int64Value ?? 0
+                        let extra = extras[id]
+                        let cwd = item["cwd"]?.stringValue ?? ""
                         summaries.append([
                             "id": id,
                             "title": item["name"]?.stringValue ?? "",
                             "preview": item["preview"]?.stringValue ?? "",
-                            "model": item["modelProvider"]?.stringValue ?? "",
-                            "updated_ms": updatedAt * 1000
+                            "model": extra?.model ?? item["modelProvider"]?.stringValue ?? "",
+                            "updated_ms": updatedAt * 1000,
+                            "pinned": extra?.pinned ?? false,
+                            "cwd": cwd,
+                            "projectFolder": Self.projectFolderName(
+                                cwd: cwd,
+                                gitURL: item["gitInfo"]?["originUrl"]?.stringValue
+                            )
                         ])
                     }
                     return ThreadListPayload(items: summaries)
@@ -471,6 +495,39 @@ final class RemoteControlManager {
             return first
         }
         return payload.items
+    }
+
+    private func emitThreadListEvent(sessionID: String) async throws {
+        let summaries = await listThreadSummaries()
+        let data = try JSONSerialization.data(withJSONObject: summaries, options: [.sortedKeys])
+        let text = String(decoding: data, as: UTF8.self)
+        _ = try await eventStore.append(
+            sessionID: sessionID,
+            kind: .actionProgress,
+            title: "Codex 会话列表",
+            text: text
+        )
+    }
+
+    /// 该会话若设置过专属模型，返回其模型 ID；否则返回 nil（调用方回退到全局默认）。
+    private func resolvedModelID(for threadID: String?) -> String? {
+        guard let threadID, let id = threadModelOverrides[threadID], !id.isEmpty else { return nil }
+        return id
+    }
+
+    private func persistThreadModelOverrides() {
+        UserDefaults.standard.set(threadModelOverrides, forKey: DefaultsKey.threadModelOverrides)
+    }
+
+    nonisolated private static func projectFolderName(cwd: String, gitURL: String?) -> String {
+        if let gitURL, !gitURL.isEmpty,
+           let url = URL(string: gitURL) {
+            let name = url.lastPathComponent
+                .replacingOccurrences(of: ".git", with: "")
+            if !name.isEmpty { return name }
+        }
+        let trimmed = cwd.split(separator: "/").last.map(String.init) ?? ""
+        return trimmed.isEmpty ? cwd : trimmed
     }
 
     private struct ThreadListPayload: @unchecked Sendable {
@@ -506,7 +563,8 @@ final class RemoteControlManager {
                     cwd: command.cwd,
                     threadID: command.threadID,
                     providerID: nil,
-                    modelID: providerStore.currentModelFromConfig(),
+                    modelID: resolvedModelID(for: command.threadID)
+                        ?? providerStore.currentModelFromConfig(),
                     approvalRequestID: nil
                 )
                 do {
@@ -617,6 +675,9 @@ final class RemoteControlManager {
 
         try providerStore.activateProviderDirect(provider)
         let switched = provider
+        // 切换供应商后旧供应商的模型 ID 不再可用，清空按会话模型覆盖，回退到新供应商默认模型。
+        threadModelOverrides.removeAll()
+        persistThreadModelOverrides()
         let compatibility = try providerStore.reconcileCodexConfiguration(provider: switched)
         lastKnownProviderID = switched.id
         lastKnownModelID = compatibility.modelID
@@ -670,6 +731,36 @@ final class RemoteControlManager {
         let matcher = Self.normalized(value)
         let target = catalog.first(where: { $0.id == value || Self.normalized($0.name) == matcher })
             ?? RemoteModelSummary(id: value, name: value, isCurrent: false)
+
+        // 按会话切换模型：只记录该会话的模型覆盖，后续指令经 thread/resume、turn/start 的
+        // model 参数生效；不修改全局 config.toml、不重启 app-server（秒级生效）。
+        if let threadID {
+            let previous = resolvedModelID(for: threadID) ?? providerStore.currentModelFromConfig() ?? ""
+            if previous == target.id {
+                _ = try await eventStore.append(
+                    sessionID: sessionID,
+                    kind: .modelChanged,
+                    title: "会话已经在使用 \(target.name)",
+                    text: target.name,
+                    threadID: threadID,
+                    metadata: ["modelID": target.id, "mode": "thread"]
+                )
+                return
+            }
+            threadModelOverrides[threadID] = target.id
+            persistThreadModelOverrides()
+            statusText = "会话已切换到模型 \(target.name)"
+            notifyChange()
+            _ = try await eventStore.append(
+                sessionID: sessionID,
+                kind: .modelChanged,
+                title: "会话模型已切换",
+                text: target.name,
+                threadID: threadID,
+                metadata: ["modelID": target.id, "mode": "thread", "previous": previous]
+            )
+            return
+        }
 
         let current = providerStore.currentModelFromConfig()
         if target.id == current {

@@ -226,6 +226,96 @@ struct CCSwitchProviderStore: Sendable {
         _ = try reconcileCodexConfiguration()
     }
 
+    // MARK: - Codex 线程附加信息（置顶 / 按会话模型）
+
+    /// 从 Codex 桌面状态库读取线程附加信息（is_pinned / model），供手机端置顶与按会话模型展示。
+    /// 异步 + 4 秒超时 + busy_timeout，避免 Codex daemon 持有 DB 锁时把中继指令循环堵死。
+    func threadExtras() async -> [String: ThreadExtra] {
+        let payload: ThreadExtrasPayload = await withTaskGroup(of: ThreadExtrasPayload.self) { group in
+            group.addTask { ThreadExtrasPayload(items: Self.queryThreadExtrasSync()) }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(4))
+                return ThreadExtrasPayload(items: [:])
+            }
+            let first = await group.next() ?? ThreadExtrasPayload(items: [:])
+            group.cancelAll()
+            return first
+        }
+        return payload.items
+    }
+
+    /// 写回线程置顶状态（与桌面 Codex 一致）。成功返回 true。
+    func setThreadPinned(threadID: String, pinned: Bool) async -> Bool {
+        let payload: ThreadPinPayload = await withTaskGroup(of: ThreadPinPayload.self) { group in
+            group.addTask {
+                let escaped = threadID.replacingOccurrences(of: "'", with: "''")
+                let value = pinned ? "1" : "0"
+                let sql = "PRAGMA busy_timeout=2000; UPDATE threads SET is_pinned=\(value) WHERE id='\(escaped)';"
+                let ok = Self.runSQLiteWrite(stateDBPath: Self.codexStateDatabasePath, sql: sql)
+                return ThreadPinPayload(value: ok)
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(4))
+                return ThreadPinPayload(value: false)
+            }
+            let first = await group.next() ?? ThreadPinPayload(value: false)
+            group.cancelAll()
+            return first
+        }
+        return payload.value
+    }
+
+    private static let codexStateDatabasePath = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".codex/state_5.sqlite").path
+
+    private struct ThreadExtrasPayload: @unchecked Sendable {
+        let items: [String: ThreadExtra]
+    }
+
+    private struct ThreadPinPayload: @unchecked Sendable {
+        let value: Bool
+    }
+
+    private static func queryThreadExtrasSync() -> [String: ThreadExtra] {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [
+            "-json",
+            "file:\(codexStateDatabasePath)?mode=ro",
+            """
+            PRAGMA busy_timeout=2000;
+            SELECT id, is_pinned, model FROM threads;
+            """
+        ]
+        process.standardOutput = output
+        guard (try? process.run()) != nil else { return [:] }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return [:] }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        guard let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [:] }
+        var result: [String: ThreadExtra] = [:]
+        for row in rows {
+            guard let id = row["id"] as? String, !id.isEmpty else { continue }
+            let pinned = (row["is_pinned"] as? NSNumber)?.boolValue ?? false
+            let model = row["model"] as? String
+            result[id] = ThreadExtra(pinned: pinned, model: model)
+        }
+        return result
+    }
+
+    private static func runSQLiteWrite(stateDBPath: String, sql: String) -> Bool {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = ["file:\(stateDBPath)?mode=rw", sql]
+        process.standardOutput = pipe
+        process.standardError = pipe
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
     /// 解析并返回某供应商的 settings_config JSON。失败返回 nil。
     private func providerSettings(providerID: String) -> [String: Any]? {
         let databasePath = databaseURL.path
@@ -762,4 +852,10 @@ struct CCSwitchProviderStore: Sendable {
             .replacingOccurrences(of: " ", with: "")
             .replacingOccurrences(of: "-", with: "")
     }
+}
+
+/// Codex 线程的桌面端附加信息（置顶状态 / 该线程实际使用的模型）。
+struct ThreadExtra: Sendable {
+    let pinned: Bool
+    let model: String?
 }

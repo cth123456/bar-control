@@ -14,20 +14,52 @@ struct RemoteDisplayItem: Identifiable {
     let threadID: String?
 }
 
-struct RemoteConversation: Identifiable {
+struct RemoteConversation: Identifiable, Codable, Equatable {
     let id: String
-    let title: String
-    let subtitle: String
-    let updatedAt: Date
-    let messageCount: Int
+    var title: String
+    var subtitle: String
+    var updatedAt: Date
+    var messageCount: Int
+    var pinned: Bool
+    var projectFolder: String
+    var cwd: String
+    var model: String
+
+    init(
+        id: String,
+        title: String,
+        subtitle: String,
+        updatedAt: Date,
+        messageCount: Int,
+        pinned: Bool = false,
+        projectFolder: String = "",
+        cwd: String = "",
+        model: String = ""
+    ) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.updatedAt = updatedAt
+        self.messageCount = messageCount
+        self.pinned = pinned
+        self.projectFolder = projectFolder
+        self.cwd = cwd
+        self.model = model
+    }
+}
+
+private struct RemoteCache: Codable {
+    var events: [RemoteEvent] = []
+    var codexThreads: [RemoteConversation] = []
+    var providerNames: [String] = []
+    var currentProviderName: String?
+    var modelNames: [String] = []
+    var currentModelName: String?
+    var threadModels: [String: String] = [:]
 }
 
 @MainActor
 final class RemoteViewModel: ObservableObject {
-    private enum DefaultsKey {
-        static let selectedThreadID = "remote.selectedThreadID.v1"
-    }
-
     @Published private(set) var events: [RemoteEvent] = []
     @Published private(set) var connectionText = "正在连接"
     @Published private(set) var isConnected = false
@@ -38,21 +70,13 @@ final class RemoteViewModel: ObservableObject {
     @Published private(set) var currentModelName: String?
     @Published private(set) var isNewConversation = false
     @Published private(set) var codexThreads: [RemoteConversation] = []
+    @Published private(set) var threadModels: [String: String] = [:]
+    @Published var filterProject: String?
     @Published var prompt = ""
     @Published var workingDirectory = "/Users/mac/Documents/Obsidian Vault"
     @Published var errorMessage: String?
     @Published private(set) var files: [RemoteFileInfo] = []
-    @Published var selectedThreadID: String? = UserDefaults.standard.string(
-        forKey: DefaultsKey.selectedThreadID
-    ) {
-        didSet {
-            if let selectedThreadID, !selectedThreadID.isEmpty {
-                UserDefaults.standard.set(selectedThreadID, forKey: DefaultsKey.selectedThreadID)
-            } else {
-                UserDefaults.standard.removeObject(forKey: DefaultsKey.selectedThreadID)
-            }
-        }
-    }
+    @Published var selectedThreadID: String?
     @Published var selectedConversationTitle = "远程 Codex"
     @Published var switchNotice: String?
 
@@ -66,6 +90,18 @@ final class RemoteViewModel: ObservableObject {
     private var pendingNewText: String?
     private var pendingNewSentAt: Date?
     private var downloadedFiles: [String: URL] = [:]
+    private var lastCacheSaveAt = Date.distantPast
+
+    init() {
+        let cache = Self.loadCache()
+        events = cache.events
+        codexThreads = cache.codexThreads
+        providerNames = cache.providerNames
+        currentProviderName = cache.currentProviderName
+        modelNames = cache.modelNames
+        currentModelName = cache.currentModelName
+        threadModels = cache.threadModels
+    }
 
     var latestThreadID: String? {
         events.reversed().compactMap(\.threadID).first
@@ -98,7 +134,42 @@ final class RemoteViewModel: ObservableObject {
                 messageCount: sorted.count
             )
         }
-        return byID.values.sorted { $0.updatedAt > $1.updatedAt }
+        return byID.values.sorted { left, right in
+            if left.pinned != right.pinned { return left.pinned && !right.pinned }
+            return left.updatedAt > right.updatedAt
+        }
+    }
+
+    var filteredConversations: [RemoteConversation] {
+        guard let filterProject, !filterProject.isEmpty else { return conversations }
+        return conversations.filter { $0.projectFolder == filterProject }
+    }
+
+    var projectFolders: [String] {
+        Array(Set(codexThreads.map(\.projectFolder).filter { !$0.isEmpty })).sorted()
+    }
+
+    var projectPaths: [String: String] {
+        var result: [String: String] = [:]
+        for thread in codexThreads where !thread.projectFolder.isEmpty && !thread.cwd.isEmpty {
+            if result[thread.projectFolder] == nil { result[thread.projectFolder] = thread.cwd }
+        }
+        return result
+    }
+
+    var currentProjectFolderName: String {
+        let trimmed = workingDirectory.split(separator: "/").last.map(String.init) ?? ""
+        return trimmed.isEmpty ? workingDirectory : trimmed
+    }
+
+    var selectedConversation: RemoteConversation? {
+        guard let selectedThreadID else { return nil }
+        return codexThreads.first { $0.id == selectedThreadID }
+    }
+
+    var currentThreadModelName: String? {
+        guard let selectedThreadID else { return currentModelName }
+        return threadModels[selectedThreadID] ?? selectedConversation?.model ?? currentModelName
     }
 
     var threadDisplayItems: [RemoteDisplayItem] {
@@ -251,6 +322,7 @@ final class RemoteViewModel: ObservableObject {
                 needsFileRefresh = false
                 await refreshFiles()
             }
+            saveCacheIfNeeded()
             connectionText = "已连接 Mac"
             errorMessage = nil
         } catch {
@@ -365,6 +437,12 @@ final class RemoteViewModel: ObservableObject {
         Task { await refreshFiles() }
     }
 
+    func closeConversation() {
+        selectedThreadID = nil
+        isNewConversation = false
+        selectedConversationTitle = "远程 Codex"
+    }
+
     func startNewConversation() {
         isNewConversation = true
         selectedThreadID = nil
@@ -434,6 +512,40 @@ final class RemoteViewModel: ObservableObject {
         )
     }
 
+    /// 切换当前会话的专属模型（Mac 端只记录该会话覆盖，不修改全局默认）。
+    func switchThreadModel(_ name: String) {
+        guard let selectedThreadID else { return }
+        if let index = codexThreads.firstIndex(where: { $0.id == selectedThreadID }) {
+            codexThreads[index].model = name
+        }
+        threadModels[selectedThreadID] = name
+        saveCacheIfNeeded(force: true)
+        Task {
+            await sendCommand(
+                type: .switchModel,
+                text: name,
+                threadID: selectedThreadID,
+                modelID: name
+            )
+        }
+    }
+
+    /// 置顶/取消置顶会话（写回 Mac 的 Codex 桌面状态库，两端一致）。
+    func togglePin(_ conversation: RemoteConversation) {
+        let newValue = !conversation.pinned
+        if let index = codexThreads.firstIndex(where: { $0.id == conversation.id }) {
+            codexThreads[index].pinned = newValue
+        }
+        saveCacheIfNeeded(force: true)
+        Task {
+            await sendCommand(
+                type: .setPinned,
+                text: newValue ? "1" : "0",
+                threadID: conversation.id
+            )
+        }
+    }
+
     func answerApproval(_ event: RemoteEvent, accepted: Bool) async {
         guard let requestID = event.rpcRequestID else { return }
         await sendCommand(
@@ -450,7 +562,45 @@ final class RemoteViewModel: ObservableObject {
         modelNames.removeAll()
         currentModelName = nil
         codexThreads.removeAll()
+        threadModels.removeAll()
+        filterProject = nil
         didRequestProviders = false
+        try? FileManager.default.removeItem(at: Self.cacheURL)
+    }
+
+    // MARK: - 本地缓存（重启后立即显示上次数据，不等 CloudKit）
+
+    private static var cacheURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("barcontrol-cache.json")
+    }
+
+    private static func loadCache() -> RemoteCache {
+        guard let data = try? Data(contentsOf: cacheURL) else { return RemoteCache() }
+        return (try? JSONDecoder().decode(RemoteCache.self, from: data)) ?? RemoteCache()
+    }
+
+    private func saveCacheIfNeeded(force: Bool = false) {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastCacheSaveAt) >= 5 else { return }
+        lastCacheSaveAt = now
+        let cache = RemoteCache(
+            events: Array(events.suffix(800)),
+            codexThreads: codexThreads,
+            providerNames: providerNames,
+            currentProviderName: currentProviderName,
+            modelNames: modelNames,
+            currentModelName: currentModelName,
+            threadModels: threadModels
+        )
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(cache)
+            try data.write(to: Self.cacheURL, options: .atomic)
+        } catch {
+            appendDiagnostics("cache_save_error \(error)")
+        }
     }
 
     private func sendCommand(
@@ -530,7 +680,15 @@ final class RemoteViewModel: ObservableObject {
             }
         }
         if event.kind == .modelChanged, !event.text.isEmpty {
-            currentModelName = event.text
+            if event.metadata["mode"] == "thread",
+               let threadID = event.threadID, !threadID.isEmpty {
+                threadModels[threadID] = event.text
+                if let index = codexThreads.firstIndex(where: { $0.id == threadID }) {
+                    codexThreads[index].model = event.text
+                }
+            } else {
+                currentModelName = event.text
+            }
             if !modelNames.contains(event.text) { modelNames.append(event.text) }
         }
         if event.title == "Codex 模型" {
@@ -552,15 +710,29 @@ final class RemoteViewModel: ObservableObject {
                 let preview = (item["preview"] as? String) ?? ""
                 let model = (item["model"] as? String) ?? ""
                 let updatedMS = (item["updated_ms"] as? NSNumber)?.doubleValue ?? 0
+                let pinned = (item["pinned"] as? NSNumber)?.boolValue ?? false
+                let cwd = (item["cwd"] as? String) ?? ""
+                let projectFolder = (item["projectFolder"] as? String) ?? Self.folderName(from: cwd)
+                let threadModel = threadModels[id] ?? model
                 return RemoteConversation(
                     id: id,
                     title: String(title.prefix(40)),
-                    subtitle: String((preview.isEmpty ? model : preview).prefix(80)),
+                    subtitle: String((preview.isEmpty ? threadModel : preview).prefix(80)),
                     updatedAt: Date(timeIntervalSince1970: updatedMS / 1000),
-                    messageCount: 0
+                    messageCount: 0,
+                    pinned: pinned,
+                    projectFolder: projectFolder,
+                    cwd: cwd,
+                    model: threadModel
                 )
             }
+            saveCacheIfNeeded(force: true)
         }
+    }
+
+    private static func folderName(from cwd: String) -> String {
+        let trimmed = cwd.split(separator: "/").last.map(String.init) ?? ""
+        return trimmed.isEmpty ? cwd : trimmed
     }
 
     private static var deviceID: String {

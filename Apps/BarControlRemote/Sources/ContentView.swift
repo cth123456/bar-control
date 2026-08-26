@@ -58,7 +58,7 @@ struct ContentView: View {
                         .listRowInsets(EdgeInsets(top: 2, leading: 14, bottom: 2, trailing: 14))
                 }
             }
-            if model.conversations.isEmpty {
+            if model.filteredConversations.isEmpty {
                 ContentUnavailableView(
                     "还没有会话",
                     systemImage: "bubble.left.and.bubble.right",
@@ -67,13 +67,24 @@ struct ContentView: View {
                 .listRowSeparator(.hidden)
                 .padding(.top, 60)
             } else {
-                ForEach(model.conversations) { conversation in
+                ForEach(model.filteredConversations) { conversation in
                     Button {
                         model.openConversation(conversation.id, title: conversation.title)
                     } label: {
                         ConversationRow(conversation: conversation)
                     }
                     .buttonStyle(.plain)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button {
+                            model.togglePin(conversation)
+                        } label: {
+                            Label(
+                                conversation.pinned ? "取消置顶" : "置顶",
+                                systemImage: conversation.pinned ? "pin.slash" : "pin"
+                            )
+                        }
+                        .tint(conversation.pinned ? .gray : .orange)
+                    }
                 }
             }
         }
@@ -82,7 +93,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarLeading) {
                 providerMenu
-                modelMenu
+                projectMenu
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
@@ -140,12 +151,21 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
-                    model.startNewConversation()
+                    model.closeConversation()
                 } label: {
                     Label("会话列表", systemImage: "chevron.left")
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if let selected = model.selectedConversation {
+                    Button {
+                        model.togglePin(selected)
+                    } label: {
+                        Image(systemName: selected.pinned ? "pin.fill" : "pin")
+                    }
+                    .accessibilityLabel(selected.pinned ? "取消置顶" : "置顶")
+                }
+                conversationModelMenu
                 Button {
                     Task { await model.stopCurrentTurn() }
                 } label: {
@@ -186,7 +206,34 @@ struct ContentView: View {
         }
     }
 
-    private var modelMenu: some View {
+    private var projectMenu: some View {
+        Menu {
+            Button {
+                model.filterProject = nil
+            } label: {
+                if model.filterProject == nil {
+                    Label("全部项目", systemImage: "checkmark")
+                } else {
+                    Text("全部项目")
+                }
+            }
+            ForEach(model.projectFolders, id: \.self) { folder in
+                Button {
+                    model.filterProject = folder
+                } label: {
+                    if model.filterProject == folder {
+                        Label(folder, systemImage: "checkmark")
+                    } else {
+                        Text(folder)
+                    }
+                }
+            }
+        } label: {
+            Label(model.filterProject ?? "项目", systemImage: "folder")
+        }
+    }
+
+    private var conversationModelMenu: some View {
         Menu {
             if model.modelNames.isEmpty {
                 Button("正在读取模型…") {}
@@ -194,9 +241,9 @@ struct ContentView: View {
             } else {
                 ForEach(model.modelNames, id: \.self) { name in
                     Button {
-                        Task { await model.switchModel(name) }
+                        model.switchThreadModel(name)
                     } label: {
-                        if name == model.currentModelName {
+                        if name == model.currentThreadModelName {
                             Label(name, systemImage: "checkmark")
                         } else {
                             Text(name)
@@ -205,7 +252,7 @@ struct ContentView: View {
                 }
             }
         } label: {
-            Label(model.currentModelName ?? "模型", systemImage: "cpu")
+            Label(model.currentThreadModelName ?? "模型", systemImage: "cpu")
         }
     }
 
@@ -295,6 +342,26 @@ struct ContentView: View {
     private var composer: some View {
         VStack(spacing: 6) {
             HStack(spacing: 10) {
+                if model.isNewConversation {
+                    Menu {
+                        ForEach(model.projectFolders, id: \.self) { folder in
+                            Button {
+                                model.workingDirectory = model.projectPaths[folder] ?? model.workingDirectory
+                            } label: {
+                                if folder == model.currentProjectFolderName {
+                                    Label(folder, systemImage: "checkmark")
+                                } else {
+                                    Text(folder)
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "folder")
+                            .font(.system(size: 22))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("选择项目文件夹")
+                }
                 Button {
                     Task { await model.toggleSpeech() }
                 } label: {
@@ -365,13 +432,26 @@ private struct ConversationRow: View {
                 .frame(width: 40, height: 40)
                 .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 3) {
-                Text(conversation.title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if conversation.pinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    Text(conversation.title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                }
                 if !conversation.subtitle.isEmpty {
                     Text(conversation.subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                if !conversation.projectFolder.isEmpty {
+                    Label(conversation.projectFolder, systemImage: "folder")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
             }
