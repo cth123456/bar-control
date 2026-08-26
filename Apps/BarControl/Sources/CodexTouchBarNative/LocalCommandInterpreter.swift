@@ -10,12 +10,21 @@ struct LocalCommandInterpreter: Sendable {
         let model: String
         let messages: [Message]
         let stream: Bool
-        let format: String
+        let format: String?
         let keepAlive: String
 
         enum CodingKeys: String, CodingKey {
             case model, messages, stream, format
             case keepAlive = "keep_alive"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(model, forKey: .model)
+            try container.encode(messages, forKey: .messages)
+            try container.encode(stream, forKey: .stream)
+            try container.encodeIfPresent(format, forKey: .format)
+            try container.encode(keepAlive, forKey: .keepAlive)
         }
     }
 
@@ -43,6 +52,12 @@ struct LocalCommandInterpreter: Sendable {
             return deterministic
         }
 
+        // 手机端会话内只和 Codex 账号沟通；不再用本地模型做指令分类（避免卡顿），
+        // 其余内容一律作为 Codex prompt 直发。本地模型聊天走独立的 chat() 入口。
+        return .directPrompt(trimmed)
+
+        // 以下为旧的本地模型分类逻辑，保留供参考（不可达）。
+        /*
         let providerNames = providers.map(\.name).joined(separator: "、")
         let system = """
         你是 Bar Control 的本地指令分类器。只做分类，不执行命令。
@@ -98,6 +113,40 @@ struct LocalCommandInterpreter: Sendable {
             return intent
         } catch {
             return .directPrompt(trimmed)
+        }
+        */
+    }
+
+    /// 直接和本地 Ollama 模型聊天（手机端“本地模型”入口使用）。
+    func chat(_ text: String) async -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let system = """
+        你是用户 Mac 上本地运行的 AI 助手（Qwen，Ollama）。用中文简洁回答；\
+        涉及代码时给出可以直接使用的代码。你只运行在本机，不连接 Codex 账号或网络。
+        """
+        let request = OllamaRequest(
+            model: model,
+            messages: [
+                .init(role: "system", content: system),
+                .init(role: "user", content: trimmed)
+            ],
+            stream: false,
+            format: nil,
+            keepAlive: "5m"
+        )
+        do {
+            var urlRequest = URLRequest(url: endpoint)
+            urlRequest.httpMethod = "POST"
+            urlRequest.timeoutInterval = 90
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.httpBody = try JSONEncoder().encode(request)
+            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return "" }
+            let payload = try JSONDecoder().decode(OllamaResponse.self, from: data)
+            return payload.message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            return ""
         }
     }
 

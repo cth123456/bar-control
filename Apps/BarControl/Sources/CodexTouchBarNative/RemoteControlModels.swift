@@ -96,6 +96,7 @@ enum RemoteEventKind: String, Codable, CaseIterable, Sendable {
     case turnCompleted
     case turnFailed
     case modelChanged
+    case localAssistantMessage
     case warning
     case error
 }
@@ -149,6 +150,7 @@ struct RemoteEvent: Codable, Identifiable, Equatable, Sendable {
 
 enum RemoteCommandType: String, Codable, CaseIterable, Sendable {
     case prompt
+    case localPrompt
     case steer
     case stop
     case approve
@@ -243,6 +245,7 @@ struct LocalIntent: Codable, Equatable, Sendable {
 
 enum RemoteControlConstants {
     static let cloudContainerIdentifier = "iCloud.com.cth123456.BarControlRemote"
+    static let localChatThreadID = "local-chat"
     static let commandRecordType = "RemoteCommand"
     static let eventRecordType = "RemoteEvent"
     static let fileRecordType = "RemoteFile"

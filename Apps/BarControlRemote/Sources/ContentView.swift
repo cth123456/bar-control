@@ -16,7 +16,9 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            if model.selectedThreadID != nil || model.isNewConversation {
+            if model.showingLocalChat {
+                localChatView
+            } else if model.selectedThreadID != nil || model.isNewConversation {
                 chatDetailView
             } else {
                 conversationListView
@@ -29,6 +31,33 @@ struct ContentView: View {
 
     private var conversationListView: some View {
         List {
+            Button {
+                model.closeConversation()
+                model.showingLocalChat = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.purple)
+                        .frame(width: 40, height: 40)
+                        .background(Color.purple.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("本地模型")
+                            .font(.subheadline.weight(.semibold))
+                        Text("本机 Ollama 对话，不经过 Codex 账号")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.vertical, 6)
+            }
+            .buttonStyle(.plain)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
             connectionCard
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 4, trailing: 14))
@@ -68,12 +97,11 @@ struct ContentView: View {
                 .padding(.top, 60)
             } else {
                 ForEach(model.filteredConversations) { conversation in
-                    Button {
-                        model.openConversation(conversation.id, title: conversation.title)
-                    } label: {
-                        ConversationRow(conversation: conversation)
-                    }
-                    .buttonStyle(.plain)
+                    ConversationRow(conversation: conversation)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            model.openConversation(conversation.id, title: conversation.title)
+                        }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button {
                             model.togglePin(conversation)
@@ -119,7 +147,7 @@ struct ContentView: View {
                     if let approval = model.pendingApproval {
                         approvalCard(approval)
                     }
-                    if model.threadDisplayItems.isEmpty {
+                    if model.threadDisplayItems.isEmpty && model.pendingMessagesForSelectedThread.isEmpty {
                         if model.selectedConversationIsActive {
                             ContentUnavailableView(
                                 "会话正在运行中",
@@ -148,17 +176,10 @@ struct ContentView: View {
                             MessageRow(item: item)
                                 .id(item.id)
                         }
-                    }
-                    if model.isAwaitingResponse {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("等待 Mac 响应…")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                            Spacer(minLength: 60)
+                        ForEach(model.pendingMessagesForSelectedThread) { pending in
+                            PendingMessageRow(pending: pending)
+                                .id(pending.id)
                         }
-                        .padding(.vertical, 4)
                     }
                     if !model.threadFiles.isEmpty {
                         fileSection
@@ -212,6 +233,86 @@ struct ContentView: View {
             }
         }
         .safeAreaInset(edge: .bottom) { composer }
+    }
+
+    private var localChatView: some View {
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        if model.localChatItems.isEmpty && model.pendingMessagesForLocalChat.isEmpty {
+                            ContentUnavailableView(
+                                "本地模型",
+                                systemImage: "sparkles",
+                                description: Text("本机 Ollama 对话，不经过 Codex 账号。")
+                            )
+                            .padding(.top, 80)
+                        } else {
+                            ForEach(model.localChatItems) { item in
+                                MessageRow(item: item)
+                                    .id(item.id)
+                            }
+                            ForEach(model.pendingMessagesForLocalChat) { pending in
+                                PendingMessageRow(pending: pending)
+                                    .id(pending.id)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+                .onChange(of: model.localChatItems.last?.id ?? model.pendingMessagesForLocalChat.last?.id) { _, id in
+                    guard let id else { return }
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(id, anchor: .bottom)
+                    }
+                }
+                .onAppear {
+                    guard let id = model.localChatItems.last?.id ?? model.pendingMessagesForLocalChat.last?.id else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(id, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("本地模型")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    model.showingLocalChat = false
+                } label: {
+                    Label("首页", systemImage: "chevron.left")
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) { localComposer }
+    }
+
+    private var localComposer: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 10) {
+                TextField("和本地模型说点什么", text: $model.prompt, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.secondary.opacity(0.11), in: RoundedRectangle(cornerRadius: 16))
+                Button {
+                    Task { await model.sendLocalPrompt() }
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                }
+                .buttonStyle(.plain)
+                .disabled(model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .background(.ultraThinMaterial)
+        }
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
@@ -527,6 +628,13 @@ private struct MessageRow: View {
                     .padding(10)
                     .background(Color.blue.opacity(0.18), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
+        case .localAssistantMessage:
+            HStack {
+                bubble
+                    .padding(10)
+                    .background(Color.purple.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                Spacer(minLength: 60)
+            }
         case .agentMessageDelta:
             HStack {
                 bubble
@@ -541,7 +649,7 @@ private struct MessageRow: View {
 
     @ViewBuilder
     private var bubble: some View {
-        if item.kind == .agentMessageDelta,
+        if (item.kind == .agentMessageDelta || item.kind == .localAssistantMessage),
            let attributed = try? AttributedString(markdown: item.text) {
             Text(attributed)
                 .font(.callout)
@@ -550,6 +658,33 @@ private struct MessageRow: View {
             Text(item.text)
                 .font(.callout)
                 .textSelection(.enabled)
+        }
+    }
+}
+
+private struct PendingMessageRow: View {
+    let pending: PendingMessage
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 60)
+            HStack(spacing: 6) {
+                if pending.failed {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(pending.text)
+                    .font(.callout)
+                    .foregroundStyle(pending.failed ? .red : .primary)
+            }
+            .padding(10)
+            .background(
+                (pending.failed ? Color.red : Color.blue).opacity(pending.failed ? 0.10 : 0.18),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
         }
     }
 }
@@ -608,6 +743,7 @@ private struct SystemEventRow: View {
         case .warning: return "exclamationmark.triangle.fill"
         case .agentMessageDelta: return "sparkles"
         case .modelChanged: return "cpu"
+        case .localAssistantMessage: return "sparkles"
         }
     }
 }

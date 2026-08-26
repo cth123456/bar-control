@@ -344,6 +344,41 @@ final class RemoteControlManager {
             switch command.type {
             case .prompt:
                 await interpretAndExecute(command)
+            case .localPrompt:
+                guard let text = Self.nonEmpty(command.text) else {
+                    throw CodexAppServerError.invalidResponse("本地聊天指令为空")
+                }
+                let chatThread = RemoteControlConstants.localChatThreadID
+                _ = try await eventStore.append(
+                    sessionID: command.id.uuidString,
+                    kind: .userInput,
+                    title: "你",
+                    text: text,
+                    threadID: chatThread
+                )
+                // 异步调用本地 Ollama，不阻塞中继循环。
+                Task { [weak self] in
+                    guard let self else { return }
+                    let reply = await self.interpreter.chat(text)
+                    if reply.isEmpty {
+                        _ = try? await self.eventStore.append(
+                            sessionID: command.id.uuidString,
+                            kind: .error,
+                            title: "本地模型不可用",
+                            text: "Ollama 未响应，请确认本地 Ollama 正在运行（127.0.0.1:11434）",
+                            threadID: chatThread
+                        )
+                    } else {
+                        _ = try? await self.eventStore.append(
+                            sessionID: command.id.uuidString,
+                            kind: .localAssistantMessage,
+                            title: "本地模型",
+                            text: reply,
+                            threadID: chatThread
+                        )
+                    }
+                    self.notifyChange()
+                }
             case .steer:
                 do {
                     try await appServer.steer(command.text, sessionID: command.id.uuidString)

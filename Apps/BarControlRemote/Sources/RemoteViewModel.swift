@@ -99,6 +99,14 @@ struct RemoteThreadMessage: Identifiable, Codable, Equatable {
     }
 }
 
+struct PendingMessage: Identifiable {
+    let id = UUID()
+    let text: String
+    var threadID: String?
+    var failed: Bool
+    let createdAt: Date
+}
+
 private struct RemoteCache: Codable {
     var events: [RemoteEvent] = []
     var codexThreads: [RemoteConversation] = []
@@ -127,6 +135,8 @@ final class RemoteViewModel: ObservableObject {
     @Published private(set) var threadModels: [String: String] = [:]
     @Published private(set) var isAwaitingResponse = false
     @Published private(set) var isSwitchingModel = false
+    @Published private(set) var pendingMessages: [PendingMessage] = []
+    @Published var showingLocalChat = false
     @Published var filterProject: String?
     @Published var prompt = ""
     @Published var workingDirectory = "/Users/mac/Documents/Obsidian Vault"
@@ -174,6 +184,7 @@ final class RemoteViewModel: ObservableObject {
         var buckets: [String: [RemoteEvent]] = [:]
         for event in events {
             guard let threadID = event.threadID, !threadID.isEmpty,
+                  threadID != RemoteControlConstants.localChatThreadID,
                   event.title != "Codex 会话消息",
                   event.title != "历史读取失败",
                   event.title != "正在修复原会话" else { continue }
@@ -239,12 +250,34 @@ final class RemoteViewModel: ObservableObject {
     var threadDisplayItems: [RemoteDisplayItem] {
         guard let selectedThreadID else { return [] }
         var items = historyItems(for: selectedThreadID)
-        // 会话内只保留真正的聊天内容（用户/助手/真实错误）；模型切换、进度、修复等
-        // 状态事件不再长期挂在对话里，避免“提示已切换”之类的噪音一直留在底部。
-        items.append(contentsOf: displayItems.filter {
+        let live = displayItems.filter {
             $0.threadID == selectedThreadID && Self.isChatItem($0.kind)
-        })
+        }
+        // 历史里已被实时事件覆盖的同一句话（如手机发起的那一轮）不再重复显示。
+        let liveTexts = Set(live.map(\.text))
+        items = items.filter { !liveTexts.contains($0.text) }
+        items.append(contentsOf: live)
         return items
+    }
+
+    var pendingMessagesForSelectedThread: [PendingMessage] {
+        if showingLocalChat { return [] }
+        if isNewConversation {
+            return pendingMessages.filter { $0.threadID == nil }
+        }
+        guard let selectedThreadID else { return [] }
+        return pendingMessages.filter { $0.threadID == selectedThreadID }
+    }
+
+    var pendingMessagesForLocalChat: [PendingMessage] {
+        pendingMessages.filter { $0.threadID == RemoteControlConstants.localChatThreadID }
+    }
+
+    var localChatItems: [RemoteDisplayItem] {
+        displayItems.filter {
+            $0.threadID == RemoteControlConstants.localChatThreadID
+                && ($0.kind == .userInput || $0.kind == .localAssistantMessage || $0.kind == .error)
+        }
     }
 
     private static func isChatItem(_ kind: RemoteEventKind) -> Bool {
@@ -259,6 +292,7 @@ final class RemoteViewModel: ObservableObject {
     private func historyItems(for threadID: String) -> [RemoteDisplayItem] {
         (threadHistory[threadID] ?? [])
             .sorted { $0.seq < $1.seq }
+            .suffix(30)
             .map { message in
                 RemoteDisplayItem(
                     id: message.id,
@@ -421,6 +455,17 @@ final class RemoteViewModel: ObservableObject {
                 pendingNewSentAt = nil
                 isAwaitingResponse = false
             }
+            // 已收到真实 userInput 的乐观消息从待发送列表移除（本地聊天同样适用）。
+            let confirmedTexts = Set(
+                events.compactMap { event -> String? in
+                    guard event.kind == .userInput else { return nil }
+                    let text = event.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return text.isEmpty ? nil : text
+                }
+            )
+            if !confirmedTexts.isEmpty {
+                pendingMessages.removeAll { confirmedTexts.contains($0.text) }
+            }
             if needsFileRefresh {
                 needsFileRefresh = false
                 await refreshFiles()
@@ -521,17 +566,48 @@ final class RemoteViewModel: ObservableObject {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         prompt = ""
+        pendingMessages.append(
+            PendingMessage(text: text, threadID: selectedThreadID, failed: false, createdAt: Date())
+        )
         if selectedThreadID == nil || isNewConversation {
             pendingNewText = text
             pendingNewSentAt = Date()
         }
         isAwaitingResponse = true
-        await sendCommand(
+        let ok = await sendCommand(
             type: .prompt,
             text: text,
             cwd: workingDirectory,
             threadID: selectedThreadID
         )
+        if !ok { markPendingFailed(text) }
+    }
+
+    /// 发送到本地模型（首页“本地模型”入口），同样先乐观上屏。
+    func sendLocalPrompt() async {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        prompt = ""
+        pendingMessages.append(
+            PendingMessage(
+                text: text,
+                threadID: RemoteControlConstants.localChatThreadID,
+                failed: false,
+                createdAt: Date()
+            )
+        )
+        let ok = await sendCommand(
+            type: .localPrompt,
+            text: text,
+            threadID: RemoteControlConstants.localChatThreadID
+        )
+        if !ok { markPendingFailed(text) }
+    }
+
+    private func markPendingFailed(_ text: String) {
+        if let index = pendingMessages.firstIndex(where: { $0.text == text && !$0.failed }) {
+            pendingMessages[index].failed = true
+        }
     }
 
     func openConversation(_ id: String, title: String) {
@@ -693,6 +769,8 @@ final class RemoteViewModel: ObservableObject {
         threadModels.removeAll()
         isAwaitingResponse = false
         isSwitchingModel = false
+        pendingMessages.removeAll()
+        showingLocalChat = false
         filterProject = nil
         didRequestProviders = false
         try? FileManager.default.removeItem(at: Self.cacheURL)
@@ -734,6 +812,7 @@ final class RemoteViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
     private func sendCommand(
         type: RemoteCommandType,
         text: String = "",
@@ -742,10 +821,10 @@ final class RemoteViewModel: ObservableObject {
         providerID: String? = nil,
         modelID: String? = nil,
         approvalRequestID: JSONValue? = nil
-    ) async {
+    ) async -> Bool {
         guard isConnected else {
             errorMessage = "CloudKit 尚未连接"
-            return
+            return false
         }
         isSending = true
         defer { isSending = false }
@@ -763,10 +842,12 @@ final class RemoteViewModel: ObservableObject {
             try await client.submit(command)
             connectionText = "指令已送达 iCloud"
             errorMessage = nil
+            return true
         } catch {
             errorMessage = error.localizedDescription
             print("CLOUDKIT_SEND_ERROR \(error)")
             appendDiagnostics("send_error \(error)")
+            return false
         }
     }
 
