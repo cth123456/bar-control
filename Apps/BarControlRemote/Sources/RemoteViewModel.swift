@@ -175,7 +175,8 @@ final class RemoteViewModel: ObservableObject {
         for event in events {
             guard let threadID = event.threadID, !threadID.isEmpty,
                   event.title != "Codex 会话消息",
-                  event.title != "历史读取失败" else { continue }
+                  event.title != "历史读取失败",
+                  event.title != "正在修复原会话" else { continue }
             buckets[threadID, default: []].append(event)
         }
         for (id, list) in buckets where byID[id] == nil {
@@ -296,8 +297,10 @@ final class RemoteViewModel: ObservableObject {
     var displayItems: [RemoteDisplayItem] {
         var items: [RemoteDisplayItem] = []
         for event in events {
-            // “Codex 会话消息”只是历史正文的载体，“历史读取失败”是临时诊断，都不直接渲染。
-            if event.title == "Codex 会话消息" || event.title == "历史读取失败" { continue }
+            // “Codex 会话消息”只是历史正文的载体，“历史读取失败/正在修复原会话”是临时诊断，都不直接渲染。
+            if event.title == "Codex 会话消息"
+                || event.title == "历史读取失败"
+                || event.title == "正在修复原会话" { continue }
             if event.kind == .agentMessageDelta,
                let lastIndex = items.indices.last,
                items[lastIndex].kind == .agentMessageDelta,
