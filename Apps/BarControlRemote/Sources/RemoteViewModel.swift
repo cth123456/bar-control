@@ -37,6 +37,7 @@ final class RemoteViewModel: ObservableObject {
     @Published private(set) var modelNames: [String] = []
     @Published private(set) var currentModelName: String?
     @Published private(set) var isNewConversation = false
+    @Published private(set) var codexThreads: [RemoteConversation] = []
     @Published var prompt = ""
     @Published var workingDirectory = "/Users/mac/Documents/Obsidian Vault"
     @Published var errorMessage: String?
@@ -71,19 +72,25 @@ final class RemoteViewModel: ObservableObject {
     }
 
     var conversations: [RemoteConversation] {
+        var byID: [String: RemoteConversation] = [:]
+        // 优先使用 Mac 同步来的 Codex 真实会话（有完整标题/预览/时间）
+        for thread in codexThreads {
+            byID[thread.id] = thread
+        }
+        // 再补中继事件里出现、但不在线程列表里的会话
         var buckets: [String: [RemoteEvent]] = [:]
         for event in events {
             guard let threadID = event.threadID, !threadID.isEmpty else { continue }
             buckets[threadID, default: []].append(event)
         }
-        return buckets.map { id, list in
+        for (id, list) in buckets where byID[id] == nil {
             let sorted = list.sorted { $0.sequence < $1.sequence }
             let firstUser = sorted.first(where: { $0.kind == .userInput })?
                 .text.trimmingCharacters(in: .whitespacesAndNewlines)
             let title = firstUser.flatMap { $0.isEmpty ? nil : $0 } ?? "会话 \(id.prefix(8))"
             let last = sorted.last!
             let subtitle = last.text.isEmpty ? last.title : last.text
-            return RemoteConversation(
+            byID[id] = RemoteConversation(
                 id: id,
                 title: String(title.prefix(40)),
                 subtitle: String(subtitle.prefix(80)),
@@ -91,7 +98,7 @@ final class RemoteViewModel: ObservableObject {
                 messageCount: sorted.count
             )
         }
-        .sorted { $0.updatedAt > $1.updatedAt }
+        return byID.values.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     var threadDisplayItems: [RemoteDisplayItem] {
@@ -199,6 +206,7 @@ final class RemoteViewModel: ObservableObject {
             didRequestProviders = true
             await sendCommand(type: .listProviders)
             await sendCommand(type: .listModels)
+            await sendCommand(type: .listThreads)
         }
     }
 
@@ -441,6 +449,8 @@ final class RemoteViewModel: ObservableObject {
         currentProviderName = nil
         modelNames.removeAll()
         currentModelName = nil
+        codexThreads.removeAll()
+        didRequestProviders = false
     }
 
     private func sendCommand(
@@ -531,6 +541,24 @@ final class RemoteViewModel: ObservableObject {
             if !names.isEmpty { modelNames = names }
             if let currentLine = event.text.split(separator: "\n").first(where: { $0.hasPrefix("✓ ") }) {
                 currentModelName = currentLine.dropFirst(2).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        if event.title == "Codex 会话列表",
+           let data = event.text.data(using: .utf8),
+           let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            codexThreads = array.compactMap { item in
+                guard let id = item["id"] as? String, !id.isEmpty else { return nil }
+                let title = (item["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "会话 \(id.prefix(8))"
+                let preview = (item["preview"] as? String) ?? ""
+                let model = (item["model"] as? String) ?? ""
+                let updatedMS = (item["updated_ms"] as? NSNumber)?.doubleValue ?? 0
+                return RemoteConversation(
+                    id: id,
+                    title: String(title.prefix(40)),
+                    subtitle: String((preview.isEmpty ? model : preview).prefix(80)),
+                    updatedAt: Date(timeIntervalSince1970: updatedMS / 1000),
+                    messageCount: 0
+                )
             }
         }
     }

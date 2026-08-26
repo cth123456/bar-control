@@ -157,6 +157,7 @@ enum RemoteCommandType: String, Codable, CaseIterable, Sendable {
     case switchModel
     case listProviders
     case listModels
+    case listThreads
     case healthCheck
 }
 

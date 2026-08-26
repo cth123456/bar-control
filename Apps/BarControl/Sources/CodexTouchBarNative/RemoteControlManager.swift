@@ -405,6 +405,16 @@ final class RemoteControlManager {
                     title: "Codex 模型",
                     text: list
                 )
+            case .listThreads:
+                let summaries = await listThreadSummaries()
+                let data = try JSONSerialization.data(withJSONObject: summaries, options: [.sortedKeys])
+                let text = String(decoding: data, as: UTF8.self)
+                _ = try await eventStore.append(
+                    sessionID: command.id.uuidString,
+                    kind: .actionProgress,
+                    title: "Codex 会话列表",
+                    text: text
+                )
             case .healthCheck:
                 _ = try await appServer.listThreads(limit: 1)
                 _ = try await eventStore.append(
@@ -425,6 +435,46 @@ final class RemoteControlManager {
         }
         cloudStatusText = await cloudRelay.currentStatus().label
         notifyChange()
+    }
+
+    /// 通过官方 app-server thread/list 读取最近会话摘要（id/title/preview/model/updated_ms），
+    /// 供手机端展示历史会话列表。带 5 秒兜底，避免 app-server 无响应时卡死中继指令循环。
+    private func listThreadSummaries() async -> [[String: Any]] {
+        let payload: ThreadListPayload = await withTaskGroup(of: ThreadListPayload.self) { group in
+            group.addTask {
+                do {
+                    let result = try await self.appServer.listThreads(limit: 50)
+                    var summaries: [[String: Any]] = []
+                    for item in (result["data"]?.arrayValue ?? []) {
+                        guard let id = item["id"]?.stringValue, !id.isEmpty else { continue }
+                        let updatedAt = item["updatedAt"]?.int64Value ?? 0
+                        summaries.append([
+                            "id": id,
+                            "title": item["name"]?.stringValue ?? "",
+                            "preview": item["preview"]?.stringValue ?? "",
+                            "model": item["modelProvider"]?.stringValue ?? "",
+                            "updated_ms": updatedAt * 1000
+                        ])
+                    }
+                    return ThreadListPayload(items: summaries)
+                } catch {
+                    RelayFileLog.append("listThreads failed: \(error.localizedDescription)")
+                    return ThreadListPayload(items: [])
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(5))
+                return ThreadListPayload(items: [])
+            }
+            let first = await group.next() ?? ThreadListPayload(items: [])
+            group.cancelAll()
+            return first
+        }
+        return payload.items
+    }
+
+    private struct ThreadListPayload: @unchecked Sendable {
+        let items: [[String: Any]]
     }
 
     private func interpretAndExecute(_ command: RemoteCommand) async {
