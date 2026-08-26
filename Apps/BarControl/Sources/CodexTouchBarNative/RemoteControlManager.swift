@@ -884,12 +884,26 @@ final class RemoteControlManager {
     private func restartCodexDesktopApp(threadID: String?) {
         let bundleID = "com.openai.codex"
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID) {
-            app.terminate()
+            // forceTerminate 不弹“是否关闭 Codex”确认框，否则重启会卡住
+            app.forceTerminate()
         }
         Task {
             for _ in 0..<24 {
                 if NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty { break }
                 try? await Task.sleep(for: .milliseconds(300))
+            }
+            // 兜底：确认框/卡死时强制杀进程
+            let still = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            if !still.isEmpty {
+                for app in still { app.forceTerminate() }
+                try? await Task.sleep(for: .milliseconds(500))
+                let pids = still.compactMap { $0.processIdentifier == 0 ? nil : String($0.processIdentifier) }
+                if !pids.isEmpty {
+                    let kill = Process()
+                    kill.executableURL = URL(fileURLWithPath: "/bin/kill")
+                    kill.arguments = ["-9"] + pids
+                    try? kill.run()
+                }
             }
             let pkill = Process()
             pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
