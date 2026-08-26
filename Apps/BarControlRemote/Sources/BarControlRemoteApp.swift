@@ -33,6 +33,9 @@ struct BarControlRemoteApp: App {
         WindowGroup {
             ContentView(model: model)
                 .task {
+                    #if DEBUG
+                    if CommandLine.arguments.contains("--ui-preview-fixture") { return }
+                    #endif
                     await model.start()
                     if CommandLine.arguments.contains("--cloudkit-smoke-test") {
                         await model.runCloudKitSmokeTest()

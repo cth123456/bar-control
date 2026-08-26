@@ -6,6 +6,7 @@ final class RemoteControlManager {
     private enum DefaultsKey {
         static let latestThreadID = "remoteControl.latestThreadID.v1"
         static let threadModelOverrides = "remoteControl.threadModelOverrides.v1"
+        static let fallbackThreadMap = "remoteControl.fallbackThreadMap.v1"
     }
 
     private let eventStore = RemoteEventStore()
@@ -41,6 +42,9 @@ final class RemoteControlManager {
         guard startupTask == nil else { return }
         threadModelOverrides = UserDefaults.standard.dictionary(
             forKey: DefaultsKey.threadModelOverrides
+        ) as? [String: String] ?? [:]
+        fallbackThreadMap = UserDefaults.standard.dictionary(
+            forKey: DefaultsKey.fallbackThreadMap
         ) as? [String: String] ?? [:]
         eventTask = Task { [weak self, eventStore] in
             let history = await eventStore.events(limit: 500)
@@ -194,6 +198,8 @@ final class RemoteControlManager {
         }
         guard currentID != lastKnownProviderID else { return }
         lastKnownProviderID = currentID
+        fallbackThreadMap.removeAll()
+        persistFallbackThreadMap()
         RelayFileLog.append("provider change detected: \(currentID)")
 
         var provider = providers.first(where: { $0.id == currentID })
@@ -345,7 +351,7 @@ final class RemoteControlManager {
         do {
             switch command.type {
             case .prompt:
-                await interpretAndExecute(command)
+                try await executeCodexPrompt(command)
             case .localPrompt:
                 guard let text = Self.nonEmpty(command.text) else {
                     throw CodexAppServerError.invalidResponse("本地聊天指令为空")
@@ -469,7 +475,8 @@ final class RemoteControlManager {
                     sessionID: command.id.uuidString,
                     kind: .actionProgress,
                     title: "Codex 供应商",
-                    text: list
+                    text: list,
+                    metadata: ["internal": "bootstrap"]
                 )
             case .listModels:
                 await refreshModels()
@@ -478,7 +485,8 @@ final class RemoteControlManager {
                     sessionID: command.id.uuidString,
                     kind: .actionProgress,
                     title: "Codex 模型",
-                    text: list
+                    text: list,
+                    metadata: ["internal": "bootstrap"]
                 )
             case .listThreads:
                 try await emitThreadListEvent(sessionID: command.id.uuidString)
@@ -548,7 +556,8 @@ final class RemoteControlManager {
                         kind: .transcript,
                         title: "Codex 会话消息",
                         text: text,
-                        threadID: threadID
+                        threadID: threadID,
+                        metadata: ["internal": "history"]
                     )
                 } else {
                     do {
@@ -560,7 +569,8 @@ final class RemoteControlManager {
                             kind: .transcript,
                             title: "Codex 会话消息",
                             text: text,
-                            threadID: threadID
+                            threadID: threadID,
+                            metadata: ["internal": "history"]
                         )
                     } catch {
                         RelayFileLog.append("loadThreadHistory failed: \(error.localizedDescription)")
@@ -590,7 +600,9 @@ final class RemoteControlManager {
                 sessionID: command.id.uuidString,
                 kind: .error,
                 title: "执行失败",
-                text: error.localizedDescription
+                text: error.localizedDescription,
+                threadID: command.threadID,
+                metadata: ["commandType": command.type.rawValue]
             )
         }
         cloudStatusText = await cloudRelay.currentStatus().label
@@ -639,7 +651,8 @@ final class RemoteControlManager {
             sessionID: sessionID,
             kind: .actionProgress,
             title: "Codex 会话列表",
-            text: text
+            text: text,
+            metadata: ["internal": "bootstrap"]
         )
     }
 
@@ -653,6 +666,10 @@ final class RemoteControlManager {
         UserDefaults.standard.set(threadModelOverrides, forKey: DefaultsKey.threadModelOverrides)
     }
 
+    private func persistFallbackThreadMap() {
+        UserDefaults.standard.set(fallbackThreadMap, forKey: DefaultsKey.fallbackThreadMap)
+    }
+
     nonisolated private static func projectFolderName(cwd: String, gitURL: String?) -> String {
         if let gitURL, !gitURL.isEmpty,
            let url = URL(string: gitURL) {
@@ -662,6 +679,101 @@ final class RemoteControlManager {
         }
         let trimmed = cwd.split(separator: "/").last.map(String.init) ?? ""
         return trimmed.isEmpty ? cwd : trimmed
+    }
+
+    /// Phone chat is always a Codex prompt. Provider/model switching has
+    /// dedicated controls, so it must not be delayed or reinterpreted by the
+    /// local Ollama classifier.
+    private func executeCodexPrompt(_ command: RemoteCommand) async throws {
+        let executableCommand = RemoteCommand(
+            id: command.id,
+            createdAt: command.createdAt,
+            sourceDeviceID: command.sourceDeviceID,
+            type: .prompt,
+            text: command.text,
+            cwd: command.cwd,
+            threadID: command.threadID,
+            providerID: nil,
+            modelID: command.modelID
+                ?? resolvedModelID(for: command.threadID)
+                ?? providerStore.currentModelFromConfig(),
+            approvalRequestID: nil
+        )
+
+        do {
+            rememberThread(try await appServer.startTurn(command: executableCommand))
+        } catch {
+            guard let originalThreadID = executableCommand.threadID,
+                  error.localizedDescription.localizedCaseInsensitiveContains("active writer")
+            else {
+                throw error
+            }
+
+            if let mapped = fallbackThreadMap[originalThreadID] {
+                let continueCommand = RemoteCommand(
+                    id: executableCommand.id,
+                    createdAt: executableCommand.createdAt,
+                    sourceDeviceID: executableCommand.sourceDeviceID,
+                    type: .prompt,
+                    text: executableCommand.text,
+                    cwd: executableCommand.cwd,
+                    threadID: mapped,
+                    providerID: nil,
+                    modelID: executableCommand.modelID,
+                    approvalRequestID: nil
+                )
+                rememberThread(try await appServer.startTurn(command: continueCommand))
+                _ = try await eventStore.append(
+                    sessionID: command.id.uuidString,
+                    kind: .actionProgress,
+                    title: "继续会话",
+                    text: "桌面会话仍在运行，手机消息已在同一手机会话中继续",
+                    threadID: mapped,
+                    metadata: [
+                        "originalThreadID": originalThreadID,
+                        "logicalThreadID": originalThreadID
+                    ]
+                )
+                statusText = "Codex 正在执行"
+                notifyChange()
+                return
+            }
+
+            let fallback = RemoteCommand(
+                id: executableCommand.id,
+                createdAt: executableCommand.createdAt,
+                sourceDeviceID: executableCommand.sourceDeviceID,
+                type: .prompt,
+                text: executableCommand.text,
+                cwd: executableCommand.cwd,
+                threadID: nil,
+                providerID: nil,
+                modelID: executableCommand.modelID,
+                approvalRequestID: nil
+            )
+            let newThreadID = try await appServer.startTurn(command: fallback)
+            fallbackThreadMap[originalThreadID] = newThreadID
+            persistFallbackThreadMap()
+            rememberThread(newThreadID)
+            if let modelID = executableCommand.modelID {
+                threadModelOverrides[newThreadID] = modelID
+                persistThreadModelOverrides()
+            }
+            _ = try await eventStore.append(
+                sessionID: command.id.uuidString,
+                kind: .actionProgress,
+                title: "已建立手机续接",
+                text: "桌面会话正在运行，手机已在后台续接；当前页面保持不变",
+                threadID: newThreadID,
+                metadata: [
+                    "originalThreadID": originalThreadID,
+                    "logicalThreadID": originalThreadID,
+                    "modelID": executableCommand.modelID ?? ""
+                ]
+            )
+        }
+        statusText = "Codex 正在执行"
+        notifyChange()
     }
 
     private func interpretAndExecute(_ command: RemoteCommand) async {
@@ -877,6 +989,8 @@ final class RemoteControlManager {
         // 切换供应商后旧供应商的模型 ID 不再可用，清空按会话模型覆盖，回退到新供应商默认模型。
         threadModelOverrides.removeAll()
         persistThreadModelOverrides()
+        fallbackThreadMap.removeAll()
+        persistFallbackThreadMap()
         let compatibility = try providerStore.reconcileCodexConfiguration(provider: switched)
         lastKnownProviderID = switched.id
         lastKnownModelID = compatibility.modelID
@@ -1118,6 +1232,30 @@ final class RemoteControlManager {
                 title: "远程协议自检失败",
                 text: error.localizedDescription
             )
+            return false
+        }
+    }
+
+    func runAppServerRestartSmokeTest() async -> Bool {
+        let startedAt = Date().addingTimeInterval(-1)
+        do {
+            try await appServer.start()
+            try await appServer.restart()
+            _ = try await appServer.listThreads(limit: 1)
+            try? await Task.sleep(for: .milliseconds(500))
+            let recent = await eventStore.events(limit: 40).filter { $0.createdAt >= startedAt }
+            let surfacedExpectedExit = recent.contains {
+                $0.text.contains("app-server 已退出（15）")
+                    || $0.text.contains("退出状态 15")
+            }
+            RelayFileLog.append(
+                "app-server restart smoke passed=\(!surfacedExpectedExit) events=\(recent.count)"
+            )
+            await appServer.shutdown()
+            return !surfacedExpectedExit
+        } catch {
+            RelayFileLog.append("app-server restart smoke failed error=\(error)")
+            await appServer.shutdown()
             return false
         }
     }

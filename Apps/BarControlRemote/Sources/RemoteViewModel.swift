@@ -101,7 +101,8 @@ struct RemoteThreadMessage: Identifiable, Codable, Equatable {
 }
 
 struct PendingMessage: Identifiable {
-    let id = UUID()
+    let id: UUID
+    let commandID: UUID
     let text: String
     var threadID: String?
     var failed: Bool
@@ -112,11 +113,68 @@ private struct RemoteCache: Codable {
     var events: [RemoteEvent] = []
     var codexThreads: [RemoteConversation] = []
     var threadHistory: [String: [RemoteThreadMessage]] = [:]
+    var historyLoadedAt: [String: Date] = [:]
+    var threadAliases: [String: String] = [:]
+    var historyFormatVersion: Int = 0
+    var lastFetchedEventDate: Date?
     var providerNames: [String] = []
     var currentProviderName: String?
     var modelNames: [String] = []
     var currentModelName: String?
     var threadModels: [String: String] = [:]
+
+    private enum CodingKeys: String, CodingKey {
+        case events, codexThreads, threadHistory, historyLoadedAt, threadAliases, historyFormatVersion
+        case lastFetchedEventDate
+        case providerNames, currentProviderName, modelNames, currentModelName, threadModels
+    }
+
+    init(
+        events: [RemoteEvent] = [],
+        codexThreads: [RemoteConversation] = [],
+        threadHistory: [String: [RemoteThreadMessage]] = [:],
+        historyLoadedAt: [String: Date] = [:],
+        threadAliases: [String: String] = [:],
+        historyFormatVersion: Int = 2,
+        lastFetchedEventDate: Date? = nil,
+        providerNames: [String] = [],
+        currentProviderName: String? = nil,
+        modelNames: [String] = [],
+        currentModelName: String? = nil,
+        threadModels: [String: String] = [:]
+    ) {
+        self.events = events
+        self.codexThreads = codexThreads
+        self.threadHistory = threadHistory
+        self.historyLoadedAt = historyLoadedAt
+        self.threadAliases = threadAliases
+        self.historyFormatVersion = historyFormatVersion
+        self.lastFetchedEventDate = lastFetchedEventDate
+        self.providerNames = providerNames
+        self.currentProviderName = currentProviderName
+        self.modelNames = modelNames
+        self.currentModelName = currentModelName
+        self.threadModels = threadModels
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        events = try container.decodeIfPresent([RemoteEvent].self, forKey: .events) ?? []
+        codexThreads = try container.decodeIfPresent([RemoteConversation].self, forKey: .codexThreads) ?? []
+        threadHistory = try container.decodeIfPresent(
+            [String: [RemoteThreadMessage]].self,
+            forKey: .threadHistory
+        ) ?? [:]
+        historyLoadedAt = try container.decodeIfPresent([String: Date].self, forKey: .historyLoadedAt) ?? [:]
+        threadAliases = try container.decodeIfPresent([String: String].self, forKey: .threadAliases) ?? [:]
+        historyFormatVersion = try container.decodeIfPresent(Int.self, forKey: .historyFormatVersion) ?? 0
+        lastFetchedEventDate = try container.decodeIfPresent(Date.self, forKey: .lastFetchedEventDate)
+        providerNames = try container.decodeIfPresent([String].self, forKey: .providerNames) ?? []
+        currentProviderName = try container.decodeIfPresent(String.self, forKey: .currentProviderName)
+        modelNames = try container.decodeIfPresent([String].self, forKey: .modelNames) ?? []
+        currentModelName = try container.decodeIfPresent(String.self, forKey: .currentModelName)
+        threadModels = try container.decodeIfPresent([String: String].self, forKey: .threadModels) ?? [:]
+    }
 }
 
 @MainActor
@@ -132,12 +190,13 @@ final class RemoteViewModel: ObservableObject {
     @Published private(set) var isNewConversation = false
     @Published private(set) var codexThreads: [RemoteConversation] = []
     @Published private(set) var threadHistory: [String: [RemoteThreadMessage]] = [:]
+    @Published private(set) var historyLoadedAt: [String: Date] = [:]
+    @Published private(set) var threadAliases: [String: String] = [:]
     @Published private(set) var loadingHistoryThreadID: String?
     @Published private(set) var threadModels: [String: String] = [:]
     @Published private(set) var isAwaitingResponse = false
     @Published private(set) var isSwitchingModel = false
     @Published private(set) var pendingMessages: [PendingMessage] = []
-    @Published private(set) var threadNotices: [String: String] = [:]
     @Published var showingLocalChat = false
     @Published var localModelName: String {
         didSet { UserDefaults.standard.set(localModelName, forKey: "remote.localModelName.v1") }
@@ -158,25 +217,105 @@ final class RemoteViewModel: ObservableObject {
     private var seenEventIDs: Set<UUID> = []
     private var didRequestProviders = false
     private var needsFileRefresh = false
-    private var pendingNewText: String?
-    private var pendingNewSentAt: Date?
+    private var pendingNewCommandID: UUID?
     private var downloadedFiles: [String: URL] = [:]
     private var lastCacheSaveAt = Date.distantPast
     private var lastFetchedEventDate = Date(timeIntervalSince1970: 0)
+    private var consecutiveFetchFailures = 0
+    private var refreshInProgress = false
 
     init() {
         localModelName = UserDefaults.standard.string(forKey: "remote.localModelName.v1") ?? ""
         let cache = Self.loadCache()
-        events = cache.events
-        lastFetchedEventDate = cache.events.map(\.createdAt).max() ?? Date(timeIntervalSince1970: 0)
+        events = cache.events.filter(Self.shouldRetainInTimeline)
+        seenEventIDs = Set(cache.events.map(\.id))
+        lastFetchedEventDate = cache.lastFetchedEventDate
+            ?? cache.events.map(\.createdAt).max()
+            ?? Date(timeIntervalSince1970: 0)
         codexThreads = cache.codexThreads
-        threadHistory = cache.threadHistory
+        threadHistory = cache.historyFormatVersion >= 2
+            ? Self.sanitizedHistory(cache.threadHistory)
+            : [:]
+        historyLoadedAt = cache.historyFormatVersion >= 2 ? cache.historyLoadedAt : [:]
+        threadAliases = cache.threadAliases
         providerNames = cache.providerNames
         currentProviderName = cache.currentProviderName
         modelNames = cache.modelNames
         currentModelName = cache.currentModelName
         threadModels = cache.threadModels
+        #if DEBUG
+        if CommandLine.arguments.contains("--ui-preview-fixture") {
+            applyUIPreviewFixture(
+                openChat: CommandLine.arguments.contains("--ui-preview-chat")
+            )
+        }
+        #endif
     }
+
+    #if DEBUG
+    private func applyUIPreviewFixture(openChat: Bool) {
+        let now = Date()
+        let firstID = "preview-main-thread"
+        connectionText = "已连接 Mac"
+        isConnected = true
+        currentProviderName = "OpenAI Official"
+        providerNames = ["OpenAI Official", "DeepSeek"]
+        currentModelName = "GPT-5.6-Sol"
+        modelNames = ["GPT-5.6-Sol", "GPT-5.6-Terra", "DeepSeek V4 Flash"]
+        codexThreads = [
+            RemoteConversation(
+                id: firstID,
+                title: "继续设计手机客户端",
+                subtitle: "同步、发送与会话体验已经稳定",
+                updatedAt: now,
+                messageCount: 8,
+                pinned: true,
+                projectFolder: "new-chat",
+                cwd: "/Users/mac/Documents/Codex/2026-08-22/new-chat",
+                model: "GPT-5.6-Sol"
+            ),
+            RemoteConversation(
+                id: "preview-touchbar-thread",
+                title: "Touch Bar 功耗流动画",
+                subtitle: "调整并行光带的比例和速度",
+                updatedAt: now.addingTimeInterval(-1_800),
+                messageCount: 12,
+                projectFolder: "new-chat",
+                cwd: "/Users/mac/Documents/Codex/2026-08-22/new-chat",
+                model: "DeepSeek V4 Flash"
+            ),
+            RemoteConversation(
+                id: "preview-memory-thread",
+                title: "长期记忆恢复",
+                subtitle: "校验 Vault 与个人 Skills",
+                updatedAt: now.addingTimeInterval(-7_200),
+                messageCount: 5,
+                projectFolder: "Obsidian Vault",
+                cwd: "/Users/mac/Documents/Obsidian Vault",
+                model: "GPT-5.6-Sol"
+            )
+        ]
+        threadHistory[firstID] = [
+            RemoteThreadMessage(
+                role: "user",
+                text: "手机端消息发送后不要跳到新会话，历史也不要来回闪动。",
+                seq: 0,
+                createdAt: now.addingTimeInterval(-120)
+            ),
+            RemoteThreadMessage(
+                role: "assistant",
+                text: "已经把后台续接线程合并进原会话，并按命令 ID 确认消息气泡。",
+                seq: 1,
+                createdAt: now.addingTimeInterval(-60)
+            )
+        ]
+        historyLoadedAt[firstID] = now
+        if openChat {
+            selectedThreadID = firstID
+            selectedConversationTitle = "继续设计手机客户端"
+        }
+    }
+    #endif
 
     var latestThreadID: String? {
         events.reversed().compactMap(\.threadID).first
@@ -184,9 +323,34 @@ final class RemoteViewModel: ObservableObject {
 
     var conversations: [RemoteConversation] {
         var byID: [String: RemoteConversation] = [:]
-        // 优先使用 Mac 同步来的 Codex 真实会话（有完整标题/预览/时间）
-        for thread in codexThreads {
+        let aliasTargets = Set(threadAliases.values)
+        // Continuation threads are an implementation detail. Keep the original
+        // conversation row and merge the continuation's latest state into it.
+        for thread in codexThreads where !aliasTargets.contains(thread.id) {
             byID[thread.id] = thread
+        }
+        for (logicalID, routedID) in threadAliases {
+            guard let routed = codexThreads.first(where: { $0.id == routedID }) else { continue }
+            if var logical = byID[logicalID] ?? codexThreads.first(where: { $0.id == logicalID }) {
+                logical.subtitle = routed.subtitle.isEmpty ? logical.subtitle : routed.subtitle
+                logical.updatedAt = max(logical.updatedAt, routed.updatedAt)
+                logical.model = routed.model.isEmpty ? logical.model : routed.model
+                logical.active = routed.active
+                byID[logicalID] = logical
+            } else {
+                byID[logicalID] = RemoteConversation(
+                    id: logicalID,
+                    title: routed.title,
+                    subtitle: routed.subtitle,
+                    updatedAt: routed.updatedAt,
+                    messageCount: routed.messageCount,
+                    pinned: routed.pinned,
+                    projectFolder: routed.projectFolder,
+                    cwd: routed.cwd,
+                    model: routed.model,
+                    active: routed.active
+                )
+            }
         }
         // 再补中继事件里出现、但不在线程列表里的会话
         var buckets: [String: [RemoteEvent]] = [:]
@@ -196,7 +360,7 @@ final class RemoteViewModel: ObservableObject {
                   event.title != "Codex 会话消息",
                   event.title != "历史读取失败",
                   event.title != "正在修复原会话" else { continue }
-            buckets[threadID, default: []].append(event)
+            buckets[displayThreadID(for: threadID), default: []].append(event)
         }
         for (id, list) in buckets where byID[id] == nil {
             let sorted = list.sorted { $0.sequence < $1.sequence }
@@ -243,29 +407,48 @@ final class RemoteViewModel: ObservableObject {
 
     var selectedConversation: RemoteConversation? {
         guard let selectedThreadID else { return nil }
-        return codexThreads.first { $0.id == selectedThreadID }
+        return conversations.first { $0.id == selectedThreadID }
     }
 
     var selectedConversationIsActive: Bool {
-        selectedConversation?.active ?? false
+        guard let selectedThreadID else { return false }
+        let routed = routedThreadID(for: selectedThreadID) ?? selectedThreadID
+        return codexThreads.first(where: { $0.id == routed })?.active
+            ?? selectedConversation?.active
+            ?? false
     }
 
     var currentThreadModelName: String? {
         guard let selectedThreadID else { return currentModelName }
-        return threadModels[selectedThreadID] ?? selectedConversation?.model ?? currentModelName
+        let routed = routedThreadID(for: selectedThreadID) ?? selectedThreadID
+        return threadModels[routed]
+            ?? threadModels[selectedThreadID]
+            ?? selectedConversation?.model
+            ?? currentModelName
     }
 
     var threadDisplayItems: [RemoteDisplayItem] {
         guard let selectedThreadID else { return [] }
-        var items = historyItems(for: selectedThreadID)
+        let threadIDs = threadChain(startingAt: selectedThreadID)
+        var items = threadIDs.flatMap(historyItems(for:))
         let live = displayItems.filter {
-            $0.threadID == selectedThreadID && Self.isChatItem($0.kind)
+            guard let threadID = $0.threadID else { return false }
+            return threadIDs.contains(threadID) && Self.isChatItem($0.kind)
         }
-        // 历史里已被实时事件覆盖的同一句话（如手机发起的那一轮）不再重复显示。
-        let liveTexts = Set(live.map(\.text))
-        items = items.filter { !liveTexts.contains($0.text) }
+        // Only remove a history copy when the same live message is from the
+        // same moment. Repeated short messages such as "你好" remain valid.
+        items = items.filter { history in
+            !live.contains { liveItem in
+                liveItem.kind == history.kind
+                    && liveItem.text == history.text
+                    && abs(liveItem.createdAt.timeIntervalSince(history.createdAt)) < 120
+            }
+        }
         items.append(contentsOf: live)
-        return items
+        return items.sorted {
+            if $0.createdAt == $1.createdAt { return $0.sequence < $1.sequence }
+            return $0.createdAt < $1.createdAt
+        }
     }
 
     var pendingMessagesForSelectedThread: [PendingMessage] {
@@ -284,8 +467,9 @@ final class RemoteViewModel: ObservableObject {
     /// 当前会话是否有一个“已开始但尚未结束”的 turn（用于显示“正在执行…”）。
     var isTurnInProgress: Bool {
         guard let selectedThreadID else { return false }
+        let threadIDs = threadChain(startingAt: selectedThreadID)
         guard let last = events.last(where: {
-            $0.threadID == selectedThreadID
+            $0.threadID.map(threadIDs.contains) == true
                 && ($0.kind == .turnStarted || $0.kind == .turnCompleted || $0.kind == .turnFailed)
         }) else { return false }
         return last.kind == .turnStarted
@@ -337,10 +521,10 @@ final class RemoteViewModel: ObservableObject {
         return displayItems
             .filter { ($0.threadID ?? "").isEmpty }
             .filter { item in
-                // 历史 error/turnFailed 只保留最近 30 分钟，避免旧报错一直挂在首页
-                (item.kind != .error && item.kind != .turnFailed) || item.createdAt >= errorCutoff
+                (item.kind == .error || item.kind == .turnFailed || item.kind == .warning)
+                    && item.createdAt >= errorCutoff
             }
-            .suffix(4) // 只展示最近几条系统状态
+            .suffix(2)
     }
 
     var pendingApproval: RemoteEvent? {
@@ -361,47 +545,33 @@ final class RemoteViewModel: ObservableObject {
 
     var displayItems: [RemoteDisplayItem] {
         var items: [RemoteDisplayItem] = []
+        var mergeIndexes: [String: Int] = [:]
         for event in events {
-            // “Codex 会话消息”只是历史正文的载体，“历史读取失败/正在修复原会话”是临时诊断，都不直接渲染。
-            if event.title == "Codex 会话消息"
-                || event.title == "历史读取失败"
-                || event.title == "正在修复原会话" { continue }
-            if event.kind == .agentMessageDelta,
-               let lastIndex = items.indices.last,
-               items[lastIndex].kind == .agentMessageDelta,
-               items[lastIndex].itemID != nil,
-               items[lastIndex].itemID == event.itemID,
-               items[lastIndex].turnID == event.turnID {
-                let last = items[lastIndex]
-                items[lastIndex] = RemoteDisplayItem(
-                    id: last.id,
-                    kind: last.kind,
-                    title: last.title,
-                    text: last.text + event.text,
+            guard Self.shouldRetainInTimeline(event) else { continue }
+            let mergeable = event.kind == .agentMessageDelta
+                || event.kind == .reasoningSummaryDelta
+                || event.kind == .planDelta
+                || event.kind == .commandOutputDelta
+            let mergeKey = [
+                event.kind.rawValue,
+                event.sessionID,
+                event.threadID ?? "",
+                event.turnID ?? "",
+                event.itemID ?? ""
+            ].joined(separator: "|")
+            if mergeable, let existingIndex = mergeIndexes[mergeKey] {
+                let existing = items[existingIndex]
+                items[existingIndex] = RemoteDisplayItem(
+                    id: existing.id,
+                    kind: existing.kind,
+                    title: existing.title,
+                    text: existing.text + event.text,
                     sequence: event.sequence,
-                    createdAt: last.createdAt,
-                    turnID: last.turnID,
-                    itemID: last.itemID,
-                    sessionID: last.sessionID,
-                    threadID: last.threadID
-                )
-            } else if event.kind == .reasoningSummaryDelta,
-                      let lastIndex = items.indices.last,
-                      items[lastIndex].kind == .reasoningSummaryDelta,
-                      items[lastIndex].turnID != nil,
-                      items[lastIndex].turnID == event.turnID {
-                let last = items[lastIndex]
-                items[lastIndex] = RemoteDisplayItem(
-                    id: last.id,
-                    kind: last.kind,
-                    title: last.title,
-                    text: last.text + event.text,
-                    sequence: event.sequence,
-                    createdAt: last.createdAt,
-                    turnID: last.turnID,
-                    itemID: last.itemID,
-                    sessionID: last.sessionID,
-                    threadID: last.threadID
+                    createdAt: existing.createdAt,
+                    turnID: existing.turnID,
+                    itemID: existing.itemID,
+                    sessionID: existing.sessionID,
+                    threadID: existing.threadID
                 )
             } else {
                 items.append(RemoteDisplayItem(
@@ -416,6 +586,7 @@ final class RemoteViewModel: ObservableObject {
                     sessionID: event.sessionID,
                     threadID: event.threadID
                 ))
+                if mergeable { mergeIndexes[mergeKey] = items.count - 1 }
             }
         }
         let completedTurns = Set(
@@ -445,7 +616,7 @@ final class RemoteViewModel: ObservableObject {
                 guard let self else { return }
                 if self.isConnected {
                     await self.refresh()
-                    try? await Task.sleep(for: .milliseconds(500))
+                    try? await Task.sleep(for: .seconds(1))
                 } else {
                     await self.connectAndBootstrap()
                     try? await Task.sleep(for: .seconds(3))
@@ -470,17 +641,21 @@ final class RemoteViewModel: ObservableObject {
     }
 
     func refresh() async {
-        guard isConnected else { return }
+        guard isConnected, !refreshInProgress else { return }
+        refreshInProgress = true
+        defer { refreshInProgress = false }
         do {
             let fetched = try await client.fetchEvents(after: lastFetchedEventDate)
-            var added = false
+            var receivedAny = false
             for event in fetched where !seenEventIDs.contains(event.id) {
                 seenEventIDs.insert(event.id)
-                events.append(event)
-                added = true
                 consumeStateEvent(event)
+                if Self.shouldRetainInTimeline(event) {
+                    events.append(event)
+                }
+                receivedAny = true
             }
-            if added {
+            if receivedAny {
                 if let newest = fetched.map(\.createdAt).max(), newest > lastFetchedEventDate {
                     lastFetchedEventDate = newest
                 }
@@ -492,34 +667,35 @@ final class RemoteViewModel: ObservableObject {
                     needsFileRefresh = true
                 }
             }
-            if let text = pendingNewText,
-               let sentAt = pendingNewSentAt,
+            if let commandID = pendingNewCommandID,
                let match = events.last(where: {
                    $0.kind == .userInput
-                       && $0.text == text
+                       && $0.sessionID == commandID.uuidString
                        && $0.threadID != nil
-                       && $0.createdAt.timeIntervalSince(sentAt) > -30
                }) {
-                if selectedThreadID != match.threadID {
+                if let threadID = match.threadID, selectedThreadID != threadID {
+                    let text = match.text
                     selectedThreadID = match.threadID
                     selectedConversationTitle = String(text.prefix(40))
                     needsFileRefresh = true
                     isNewConversation = false
                 }
-                pendingNewText = nil
-                pendingNewSentAt = nil
+                pendingNewCommandID = nil
                 isAwaitingResponse = false
             }
-            // 已收到真实 userInput 的乐观消息从待发送列表移除（本地聊天同样适用）。
-            let confirmedTexts = Set(
+            // Confirm optimistic bubbles by command ID, not by text. Identical
+            // prompts in another conversation must never remove this bubble.
+            let confirmedCommandIDs = Set(
                 events.compactMap { event -> String? in
                     guard event.kind == .userInput else { return nil }
-                    let text = event.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    return text.isEmpty ? nil : text
+                    return event.sessionID
                 }
             )
-            if !confirmedTexts.isEmpty {
-                pendingMessages.removeAll { confirmedTexts.contains($0.text) }
+            if !confirmedCommandIDs.isEmpty {
+                pendingMessages.removeAll { confirmedCommandIDs.contains($0.commandID.uuidString) }
+            }
+            if events.count > 1_200 {
+                events.removeFirst(events.count - 1_200)
             }
             if needsFileRefresh {
                 needsFileRefresh = false
@@ -528,9 +704,15 @@ final class RemoteViewModel: ObservableObject {
             saveCacheIfNeeded()
             connectionText = "已连接 Mac"
             errorMessage = nil
+            consecutiveFetchFailures = 0
         } catch {
             connectionText = "同步暂时中断"
             errorMessage = error.localizedDescription
+            consecutiveFetchFailures += 1
+            if consecutiveFetchFailures >= 3 {
+                isConnected = false
+                didRequestProviders = false
+            }
             print("CLOUDKIT_FETCH_ERROR \(error)")
             appendDiagnostics("fetch_error \(error)")
         }
@@ -548,11 +730,11 @@ final class RemoteViewModel: ObservableObject {
             return
         }
 
-        let marker = "CLOUDKIT_REMOTE_OK_\(UUID().uuidString.prefix(8))"
+        let marker = "BCR\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
         let startedAt = Date().addingTimeInterval(-1)
         await sendCommand(
             type: .prompt,
-            text: "只回复 \(marker)，不调用工具。",
+            text: "只回复字符串 \(marker)，不调用工具。",
             cwd: workingDirectory
         )
         guard errorMessage == nil else {
@@ -621,21 +803,30 @@ final class RemoteViewModel: ObservableObject {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         prompt = ""
+        let commandID = UUID()
+        let logicalThreadID = selectedThreadID
         pendingMessages.append(
-            PendingMessage(text: text, threadID: selectedThreadID, failed: false, createdAt: Date())
+            PendingMessage(
+                id: UUID(),
+                commandID: commandID,
+                text: text,
+                threadID: logicalThreadID,
+                failed: false,
+                createdAt: Date()
+            )
         )
-        if selectedThreadID == nil || isNewConversation {
-            pendingNewText = text
-            pendingNewSentAt = Date()
+        if logicalThreadID == nil || isNewConversation {
+            pendingNewCommandID = commandID
         }
         isAwaitingResponse = true
         let ok = await sendCommand(
+            id: commandID,
             type: .prompt,
             text: text,
             cwd: workingDirectory,
-            threadID: selectedThreadID
+            threadID: routedThreadID(for: logicalThreadID)
         )
-        if !ok { markPendingFailed(text) }
+        if !ok { markPendingFailed(commandID) }
     }
 
     /// 发送到本地模型（首页“本地模型”入口），同样先乐观上屏。
@@ -643,8 +834,11 @@ final class RemoteViewModel: ObservableObject {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         prompt = ""
+        let commandID = UUID()
         pendingMessages.append(
             PendingMessage(
+                id: UUID(),
+                commandID: commandID,
                 text: text,
                 threadID: RemoteControlConstants.localChatThreadID,
                 failed: false,
@@ -652,16 +846,17 @@ final class RemoteViewModel: ObservableObject {
             )
         )
         let ok = await sendCommand(
+            id: commandID,
             type: .localPrompt,
             text: text,
             threadID: RemoteControlConstants.localChatThreadID,
             modelID: localModelName.isEmpty ? nil : localModelName
         )
-        if !ok { markPendingFailed(text) }
+        if !ok { markPendingFailed(commandID) }
     }
 
-    private func markPendingFailed(_ text: String) {
-        if let index = pendingMessages.firstIndex(where: { $0.text == text && !$0.failed }) {
+    private func markPendingFailed(_ commandID: UUID) {
+        if let index = pendingMessages.firstIndex(where: { $0.commandID == commandID }) {
             pendingMessages[index].failed = true
         }
     }
@@ -670,14 +865,9 @@ final class RemoteViewModel: ObservableObject {
         isNewConversation = false
         selectedThreadID = id
         selectedConversationTitle = title
-        if codexThreads.first(where: { $0.id == id })?.active == true {
-            // 正在运行的会话正文不可读（thread/read 会等写者释放），直接显示运行提示/实时消息。
-            loadingHistoryThreadID = nil
-        } else if let cached = threadHistory[id],
-                  !cached.isEmpty,
-                  let newest = cached.map(\.createdAt).max(),
-                  Date().timeIntervalSince(newest) < 600 {
-            // 本地已有 10 分钟内的历史缓存，直接显示，不再请求 Mac 重新解析。
+        if threadChain(startingAt: id).contains(where: { threadHistory[$0]?.isEmpty == false }) {
+            // Once loaded, the local snapshot is the immediate source of truth.
+            // Pull-to-refresh can explicitly request a newer snapshot.
             loadingHistoryThreadID = nil
         } else {
             loadingHistoryThreadID = id
@@ -694,6 +884,13 @@ final class RemoteViewModel: ObservableObject {
                 if loadingHistoryThreadID == id { loadingHistoryThreadID = nil }
             }
         }
+    }
+
+    func reloadSelectedConversation() async {
+        guard let selectedThreadID, isConnected else { return }
+        let routed = routedThreadID(for: selectedThreadID) ?? selectedThreadID
+        loadingHistoryThreadID = selectedThreadID
+        await sendCommand(type: .loadThreadHistory, threadID: routed)
     }
 
     func closeConversation() {
@@ -757,7 +954,7 @@ final class RemoteViewModel: ObservableObject {
         await sendCommand(
             type: .switchProvider,
             text: name,
-            threadID: selectedThreadID,
+            threadID: routedThreadID(for: selectedThreadID),
             providerID: name
         )
     }
@@ -766,7 +963,7 @@ final class RemoteViewModel: ObservableObject {
         await sendCommand(
             type: .switchModel,
             text: name,
-            threadID: selectedThreadID,
+            threadID: routedThreadID(for: selectedThreadID),
             modelID: name
         )
     }
@@ -774,17 +971,19 @@ final class RemoteViewModel: ObservableObject {
     /// 切换当前会话的专属模型（Mac 端只记录该会话覆盖，不修改全局默认）。
     func switchThreadModel(_ name: String) {
         guard let selectedThreadID else { return }
+        let routedThreadID = routedThreadID(for: selectedThreadID) ?? selectedThreadID
         if let index = codexThreads.firstIndex(where: { $0.id == selectedThreadID }) {
             codexThreads[index].model = name
         }
         threadModels[selectedThreadID] = name
+        threadModels[routedThreadID] = name
         saveCacheIfNeeded(force: true)
         isSwitchingModel = true
         Task {
             await sendCommand(
                 type: .switchModel,
                 text: name,
-                threadID: selectedThreadID,
+                threadID: routedThreadID,
                 modelID: name
             )
         }
@@ -827,15 +1026,18 @@ final class RemoteViewModel: ObservableObject {
         currentModelName = nil
         codexThreads.removeAll()
         threadHistory.removeAll()
+        historyLoadedAt.removeAll()
+        threadAliases.removeAll()
         loadingHistoryThreadID = nil
         threadModels.removeAll()
         isAwaitingResponse = false
         isSwitchingModel = false
         pendingMessages.removeAll()
         showingLocalChat = false
-        threadNotices.removeAll()
         filterProject = nil
         didRequestProviders = false
+        pendingNewCommandID = nil
+        lastFetchedEventDate = Date(timeIntervalSince1970: 0)
         try? FileManager.default.removeItem(at: Self.cacheURL)
     }
 
@@ -856,9 +1058,13 @@ final class RemoteViewModel: ObservableObject {
         guard force || now.timeIntervalSince(lastCacheSaveAt) >= 5 else { return }
         lastCacheSaveAt = now
         let cache = RemoteCache(
-            events: Array(events.suffix(800)),
+            events: Array(events.filter(Self.shouldRetainInTimeline).suffix(600)),
             codexThreads: codexThreads,
             threadHistory: threadHistory,
+            historyLoadedAt: historyLoadedAt,
+            threadAliases: threadAliases,
+            historyFormatVersion: 2,
+            lastFetchedEventDate: lastFetchedEventDate,
             providerNames: providerNames,
             currentProviderName: currentProviderName,
             modelNames: modelNames,
@@ -877,6 +1083,7 @@ final class RemoteViewModel: ObservableObject {
 
     @discardableResult
     private func sendCommand(
+        id: UUID = UUID(),
         type: RemoteCommandType,
         text: String = "",
         cwd: String? = nil,
@@ -892,6 +1099,7 @@ final class RemoteViewModel: ObservableObject {
         isSending = true
         defer { isSending = false }
         let command = RemoteCommand(
+            id: id,
             sourceDeviceID: Self.deviceID,
             type: type,
             text: text,
@@ -929,15 +1137,9 @@ final class RemoteViewModel: ObservableObject {
 
     private func consumeStateEvent(_ event: RemoteEvent) {
         if event.kind == .providerChanged, event.title == "切换成功" {
-            if let threadID = event.threadID, !threadID.isEmpty {
-                selectedThreadID = threadID
-            }
-            showSwitchNotice("已切换到 \(event.text)，账号和模型已自动匹配，继续使用原会话")
+            showSwitchNotice("已切换到 \(event.text)，账号和模型已自动匹配")
         }
         if event.title == "原会话已匹配" {
-            if let threadID = event.threadID, !threadID.isEmpty {
-                selectedThreadID = threadID
-            }
             showSwitchNotice(event.text)
         }
         if event.kind == .providerChanged, !event.text.isEmpty {
@@ -961,27 +1163,27 @@ final class RemoteViewModel: ObservableObject {
                 if let index = codexThreads.firstIndex(where: { $0.id == threadID }) {
                     codexThreads[index].model = event.text
                 }
-                if selectedThreadID == threadID { isSwitchingModel = false }
+                let displayID = displayThreadID(for: threadID)
+                threadModels[displayID] = event.text
+                if selectedThreadID == displayID { isSwitchingModel = false }
             } else {
                 currentModelName = event.text
             }
             if !modelNames.contains(event.text) { modelNames.append(event.text) }
         }
-        if event.title == "已切换新会话" || event.title == "继续会话",
-           let threadID = event.threadID, !threadID.isEmpty {
-            selectedThreadID = threadID
-            isNewConversation = false
-            if selectedConversationTitle.isEmpty || selectedConversationTitle == "远程 Codex" {
-                selectedConversationTitle = "手机会话"
+        if ["已建立手机续接", "已切换新会话", "继续会话"].contains(event.title),
+           let routedID = event.threadID, !routedID.isEmpty {
+            let logicalID = event.metadata["logicalThreadID"]
+                ?? event.metadata["originalThreadID"]
+                ?? selectedThreadID
+            if let logicalID, !logicalID.isEmpty, logicalID != routedID {
+                threadAliases[logicalID] = routedID
+                if selectedThreadID == routedID { selectedThreadID = logicalID }
+                isNewConversation = false
+                saveCacheIfNeeded(force: true)
             }
-            threadNotices[threadID] = event.text
-            showSwitchNotice(event.text)
-            loadingHistoryThreadID = threadID
-            Task {
-                await sendCommand(type: .listThreads)
-                await sendCommand(type: .loadThreadHistory, threadID: threadID)
-                loadingHistoryThreadID = nil
-            }
+            showSwitchNotice("桌面端正在使用原会话，手机已在后台续接；当前页面不会跳转")
+            Task { await sendCommand(type: .listThreads) }
         }
         if event.title == "Codex 模型" {
             let names = event.text.split(separator: "\n").map { line in
@@ -1035,15 +1237,107 @@ final class RemoteViewModel: ObservableObject {
                 let createdAt = ts > 0 ? Date(timeIntervalSince1970: ts) : Date()
                 messages.append(RemoteThreadMessage(role: role, text: text, seq: seq, createdAt: createdAt))
             }
-            threadHistory[threadID] = Array(messages.suffix(200))
-            if loadingHistoryThreadID == threadID { loadingHistoryThreadID = nil }
+            threadHistory[threadID] = Array(messages.suffix(50))
+            historyLoadedAt[threadID] = Date()
+            let displayID = displayThreadID(for: threadID)
+            if loadingHistoryThreadID == threadID || loadingHistoryThreadID == displayID {
+                loadingHistoryThreadID = nil
+            }
             saveCacheIfNeeded(force: true)
+        }
+        if event.kind == .agentMessageDelta
+            || event.kind == .turnCompleted
+            || event.kind == .turnFailed
+            || event.kind == .error {
+            isAwaitingResponse = false
+        }
+        if event.kind == .error || event.kind == .turnFailed {
+            if let commandID = UUID(uuidString: event.sessionID) {
+                markPendingFailed(commandID)
+            }
         }
     }
 
     private static func folderName(from cwd: String) -> String {
         let trimmed = cwd.split(separator: "/").last.map(String.init) ?? ""
         return trimmed.isEmpty ? cwd : trimmed
+    }
+
+    private func routedThreadID(for threadID: String?) -> String? {
+        guard var current = threadID else { return nil }
+        var visited: Set<String> = []
+        while let next = threadAliases[current],
+              !next.isEmpty,
+              !visited.contains(current) {
+            visited.insert(current)
+            current = next
+        }
+        return current
+    }
+
+    private func threadChain(startingAt threadID: String) -> [String] {
+        var result = [threadID]
+        var current = threadID
+        var visited: Set<String> = [threadID]
+        while let next = threadAliases[current],
+              !next.isEmpty,
+              !visited.contains(next) {
+            result.append(next)
+            visited.insert(next)
+            current = next
+        }
+        return result
+    }
+
+    private func displayThreadID(for physicalThreadID: String) -> String {
+        let targets = Set(threadAliases.values)
+        let roots = threadAliases.keys.filter { !targets.contains($0) }
+        return roots.first(where: {
+            threadChain(startingAt: $0).contains(physicalThreadID)
+        }) ?? physicalThreadID
+    }
+
+    private static func shouldRetainInTimeline(_ event: RemoteEvent) -> Bool {
+        if event.metadata["internal"] != nil { return false }
+        if [
+            "Codex 供应商",
+            "Codex 模型",
+            "Codex 会话列表",
+            "Codex 会话消息",
+            "历史读取失败",
+            "正在修复原会话",
+            "已建立手机续接",
+            "已切换新会话",
+            "继续会话",
+            "原会话已匹配"
+        ].contains(event.title) {
+            return false
+        }
+        switch event.kind {
+        case .userInput, .agentMessageDelta, .reasoningSummaryDelta,
+             .turnStarted, .turnCompleted, .turnFailed, .error, .warning,
+             .approvalRequired, .approvalResolved, .fileChange:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func sanitizedHistory(
+        _ history: [String: [RemoteThreadMessage]]
+    ) -> [String: [RemoteThreadMessage]] {
+        history.mapValues { messages in
+            messages.suffix(50).compactMap { message in
+                let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                return RemoteThreadMessage(
+                    role: message.role,
+                    text: String(text.prefix(2400)),
+                    seq: message.seq,
+                    createdAt: message.createdAt
+                )
+            }
+        }
     }
 
     /// 显示一次性提示横幅，10 秒后若未被新提示替换则自动消失。

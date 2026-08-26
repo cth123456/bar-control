@@ -307,6 +307,15 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         }
     }
 
+    func runAppServerRestartSmokeTest() {
+        Task {
+            let passed = await remoteControl.runAppServerRestartSmokeTest()
+            AppLog.write("app-server restart smoke test passed=\(passed)")
+            stop()
+            exit(passed ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
     func runProviderContinuityProbe(providerName: String, threadID: String) {
         Task {
             let passed = await remoteControl.runProviderContinuityProbe(
@@ -2007,6 +2016,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 providerName: CommandLine.arguments[probeIndex + 1],
                 threadID: CommandLine.arguments[probeIndex + 2]
             )
+            return
+        }
+        if CommandLine.arguments.contains("--app-server-restart-smoke-test") {
+            controller.runAppServerRestartSmokeTest()
             return
         }
         controller.start()

@@ -100,7 +100,7 @@ actor CloudKitRelay {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.fetchCommands()
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .milliseconds(750))
             }
         }
     }
@@ -176,7 +176,7 @@ actor CloudKitRelay {
         pendingEvents.append(event)
         guard flushTask == nil else { return }
         flushTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(50))
+            try? await Task.sleep(for: .milliseconds(120))
             await self?.flushEvents()
         }
     }
@@ -184,7 +184,7 @@ actor CloudKitRelay {
     private func flushEvents() async {
         flushTask = nil
         guard canRelay, let database, !pendingEvents.isEmpty else { return }
-        let events = pendingEvents
+        let events = Self.coalescedEvents(pendingEvents)
         pendingEvents.removeAll(keepingCapacity: true)
 
         do {
@@ -268,6 +268,45 @@ actor CloudKitRelay {
         record["sequence"] = NSNumber(value: event.sequence)
         record["sessionID"] = event.sessionID as CKRecordValue
         return record
+    }
+
+    /// Codex and Ollama often emit one or two characters per delta. Uploading
+    /// every character as its own CloudKit record causes rate pressure and
+    /// visible UI jitter, so merge adjacent deltas from the same item first.
+    private static func coalescedEvents(_ events: [RemoteEvent]) -> [RemoteEvent] {
+        var result: [RemoteEvent] = []
+        for event in events {
+            let canMerge = event.kind == .agentMessageDelta
+                || event.kind == .reasoningSummaryDelta
+                || event.kind == .planDelta
+                || event.kind == .commandOutputDelta
+            if canMerge,
+               let lastIndex = result.indices.last,
+               result[lastIndex].kind == event.kind,
+               result[lastIndex].sessionID == event.sessionID,
+               result[lastIndex].threadID == event.threadID,
+               result[lastIndex].turnID == event.turnID,
+               result[lastIndex].itemID == event.itemID {
+                let last = result[lastIndex]
+                result[lastIndex] = RemoteEvent(
+                    id: last.id,
+                    sessionID: last.sessionID,
+                    sequence: event.sequence,
+                    createdAt: last.createdAt,
+                    kind: last.kind,
+                    title: last.title,
+                    text: last.text + event.text,
+                    threadID: last.threadID,
+                    turnID: last.turnID,
+                    itemID: last.itemID,
+                    rpcRequestID: last.rpcRequestID,
+                    metadata: last.metadata
+                )
+            } else {
+                result.append(event)
+            }
+        }
+        return result
     }
 
     private static func mimeType(forPath path: String) -> String {

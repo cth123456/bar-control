@@ -7,15 +7,49 @@ struct LocalCommandInterpreter: Sendable {
             let content: String
         }
 
+        struct Options: Encodable {
+            let numCtx: Int
+            let numPredict: Int
+            let temperature: Double
+            let topP: Double
+
+            enum CodingKeys: String, CodingKey {
+                case numCtx = "num_ctx"
+                case numPredict = "num_predict"
+                case temperature
+                case topP = "top_p"
+            }
+        }
+
         let model: String
         let messages: [Message]
         let stream: Bool
         let format: String?
         let keepAlive: String
+        let think: Bool?
+        let options: Options?
 
         enum CodingKeys: String, CodingKey {
-            case model, messages, stream, format
+            case model, messages, stream, format, think, options
             case keepAlive = "keep_alive"
+        }
+
+        init(
+            model: String,
+            messages: [Message],
+            stream: Bool,
+            format: String?,
+            keepAlive: String,
+            think: Bool? = nil,
+            options: Options? = nil
+        ) {
+            self.model = model
+            self.messages = messages
+            self.stream = stream
+            self.format = format
+            self.keepAlive = keepAlive
+            self.think = think
+            self.options = options
         }
 
         func encode(to encoder: Encoder) throws {
@@ -25,6 +59,8 @@ struct LocalCommandInterpreter: Sendable {
             try container.encode(stream, forKey: .stream)
             try container.encodeIfPresent(format, forKey: .format)
             try container.encode(keepAlive, forKey: .keepAlive)
+            try container.encodeIfPresent(think, forKey: .think)
+            try container.encodeIfPresent(options, forKey: .options)
         }
     }
 
@@ -122,7 +158,7 @@ struct LocalCommandInterpreter: Sendable {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         let system = """
-        你是用户 Mac 上本地运行的 AI 助手（Qwen，Ollama）。用中文简洁回答；\
+        你是通过 Ollama 在用户 Mac 上运行的本地 AI 助手。用中文简洁回答；\
         涉及代码时给出可以直接使用的代码。你只运行在本机，不连接 Codex 账号或网络。
         """
         let request = OllamaRequest(
@@ -133,7 +169,14 @@ struct LocalCommandInterpreter: Sendable {
             ],
             stream: false,
             format: nil,
-            keepAlive: "5m"
+            keepAlive: "10m",
+            think: false,
+            options: .init(
+                numCtx: 4096,
+                numPredict: 256,
+                temperature: 0.2,
+                topP: 0.9
+            )
         )
         do {
             var urlRequest = URLRequest(url: endpoint)
@@ -174,7 +217,7 @@ struct LocalCommandInterpreter: Sendable {
                     return
                 }
                 let system = """
-                你是用户 Mac 上本地运行的 AI 助手（\(model)，Ollama）。用中文简洁回答；\
+                你是通过 Ollama 在用户 Mac 上运行的本地 AI 助手。用中文简洁回答；\
                 涉及代码时给出可以直接使用的代码。你只运行在本机，不连接 Codex 账号或网络。
                 """
                 let request = OllamaRequest(
@@ -185,7 +228,14 @@ struct LocalCommandInterpreter: Sendable {
                     ],
                     stream: true,
                     format: nil,
-                    keepAlive: "10m"
+                    keepAlive: "10m",
+                    think: false,
+                    options: .init(
+                        numCtx: 4096,
+                        numPredict: 256,
+                        temperature: 0.2,
+                        topP: 0.9
+                    )
                 )
                 do {
                     var urlRequest = URLRequest(url: endpoint)

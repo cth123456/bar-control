@@ -31,6 +31,7 @@ actor CodexAppServerClient {
     private var nextRequestID: Int64 = 1
     private var pending: [Int64: CheckedContinuation<JSONValue, Error>] = [:]
     private var startupTask: Task<Void, Error>?
+    private var expectedTerminationProcessIDs: Set<Int32> = []
     private var initialized = false
     private(set) var activeSessionID = "local"
     private(set) var activeThreadID: String?
@@ -77,7 +78,12 @@ actor CodexAppServerClient {
         process.standardOutput = output
         process.standardError = errors
         process.terminationHandler = { [weak self] process in
-            Task { await self?.processTerminated(status: process.terminationStatus) }
+            Task {
+                await self?.processTerminated(
+                    status: process.terminationStatus,
+                    processID: process.processIdentifier
+                )
+            }
         }
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -511,7 +517,13 @@ actor CodexAppServerClient {
         }
     }
 
-    private func processTerminated(status: Int32) async {
+    private func processTerminated(status: Int32, processID: Int32) async {
+        let wasExpected = expectedTerminationProcessIDs.remove(processID) != nil
+        guard process?.processIdentifier == processID else {
+            // A deliberately stopped old process may report termination after
+            // its replacement is already running. Never clear the new pipes.
+            return
+        }
         let wasInitialized = initialized
         initialized = false
         process = nil
@@ -523,7 +535,7 @@ actor CodexAppServerClient {
         for continuation in waiters {
             continuation.resume(throwing: CodexAppServerError.remoteError("Codex app-server 已退出（\(status)）"))
         }
-        if wasInitialized {
+        if wasInitialized && !wasExpected {
             _ = try? await eventStore.append(
                 sessionID: activeSessionID,
                 kind: .connection,
@@ -537,7 +549,14 @@ actor CodexAppServerClient {
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         errorPipe?.fileHandleForReading.readabilityHandler = nil
         if let process, process.isRunning {
+            expectedTerminationProcessIDs.insert(process.processIdentifier)
             process.terminate()
+        }
+        let waiters = pending.values
+        pending.removeAll()
+        let pendingError = CodexAppServerError.remoteError(reason ?? "Codex app-server 已停止")
+        for continuation in waiters {
+            continuation.resume(throwing: pendingError)
         }
         process = nil
         inputPipe = nil

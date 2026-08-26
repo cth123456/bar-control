@@ -80,13 +80,6 @@ struct ContentView: View {
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
             }
-            if !model.systemItems.isEmpty {
-                ForEach(model.systemItems.prefix(4)) { item in
-                    SystemEventRow(item: item)
-                        .listRowSeparator(.hidden)
-                        .listRowInsets(EdgeInsets(top: 2, leading: 14, bottom: 2, trailing: 14))
-                }
-            }
             if model.filteredConversations.isEmpty {
                 ContentUnavailableView(
                     "还没有会话",
@@ -141,24 +134,14 @@ struct ContentView: View {
     }
 
     private var chatDetailView: some View {
-        ScrollViewReader { proxy in
+        let timeline = model.threadDisplayItems
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 8) {
                     if let approval = model.pendingApproval {
                         approvalCard(approval)
                     }
-                    if let threadID = model.selectedThreadID,
-                       let notice = model.threadNotices[threadID] {
-                        Text(notice)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.orange.opacity(0.12), in: Capsule())
-                            .frame(maxWidth: .infinity)
-                    }
-                    if model.threadDisplayItems.isEmpty && model.pendingMessagesForSelectedThread.isEmpty {
+                    if timeline.isEmpty && model.pendingMessagesForSelectedThread.isEmpty {
                         if model.selectedConversationIsActive {
                             ContentUnavailableView(
                                 "会话正在运行中",
@@ -183,10 +166,10 @@ struct ContentView: View {
                             .padding(.top, 80)
                         }
                     } else {
-                        ForEach(Array(model.threadDisplayItems.enumerated()), id: \.element.id) { index, item in
+                        ForEach(Array(timeline.enumerated()), id: \.element.id) { index, item in
                             if index == 0
                                 || !Calendar.current.isDate(
-                                    model.threadDisplayItems[index - 1].createdAt,
+                                    timeline[index - 1].createdAt,
                                     inSameDayAs: item.createdAt
                                 ) {
                                 Text(Self.dateLabel(item.createdAt))
@@ -206,7 +189,7 @@ struct ContentView: View {
                         }
                     }
                     if model.isTurnInProgress,
-                       model.threadDisplayItems.last?.kind != .agentMessageDelta,
+                       timeline.last?.kind != .agentMessageDelta,
                        model.pendingMessagesForSelectedThread.isEmpty {
                         HStack(spacing: 8) {
                             ProgressView()
@@ -225,14 +208,17 @@ struct ContentView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
-            .onChange(of: model.threadDisplayItems.last?.id) { _, identifier in
+            .refreshable {
+                await model.reloadSelectedConversation()
+            }
+            .onChange(of: timeline.last?.id) { _, identifier in
                 guard let identifier else { return }
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo(identifier, anchor: .bottom)
                 }
             }
             .onAppear {
-                scrollToBottom(proxy)
+                scrollToBottom(proxy, identifier: timeline.last?.id)
             }
         }
         .navigationTitle(model.selectedConversationTitle)
@@ -352,8 +338,8 @@ struct ContentView: View {
         }
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        guard let identifier = model.threadDisplayItems.last?.id else { return }
+    private func scrollToBottom(_ proxy: ScrollViewProxy, identifier: UUID?) {
+        guard let identifier else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo(identifier, anchor: .bottom)
@@ -626,20 +612,11 @@ private struct ConversationRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [.blue, .purple],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Text(String(conversation.title.prefix(1)).uppercased())
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 44, height: 44)
+            Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                .font(.system(size: 20))
+                .foregroundStyle(.blue)
+                .frame(width: 40, height: 40)
+                .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     if conversation.pinned {
