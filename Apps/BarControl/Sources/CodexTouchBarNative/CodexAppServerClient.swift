@@ -156,9 +156,9 @@ actor CodexAppServerClient {
         } else {
             var params: [String: JSONValue] = [
                 "cwd": .string(cwd),
-                "approvalPolicy": .string("on-request"),
+                "approvalPolicy": .string("never"),
                 "approvalsReviewer": .string("user"),
-                "sandbox": .string("workspace-write"),
+                "sandboxPolicy": .object(["type": .string("dangerFullAccess")]),
                 "threadSource": .string("user")
             ]
             if let modelID { params["model"] = .string(modelID) }
@@ -183,7 +183,7 @@ actor CodexAppServerClient {
         var turnParams: [String: JSONValue] = [
             "threadId": .string(threadID),
             "cwd": .string(cwd),
-            "approvalPolicy": .string("on-request"),
+            "approvalPolicy": .string("never"),
             "approvalsReviewer": .string("user"),
             "input": .array([
                 .object([
@@ -208,7 +208,7 @@ actor CodexAppServerClient {
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
             "cwd": .string(cwd),
-            "approvalPolicy": .string("on-request"),
+            "approvalPolicy": .string("never"),
             "approvalsReviewer": .string("user"),
             // 这里只验证并重新挂接原 thread，不需要把大型历史再次回传到手机中继。
             "excludeTurns": .bool(true)
