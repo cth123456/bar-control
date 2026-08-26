@@ -439,16 +439,35 @@ final class RemoteControlManager {
                 let extras = await providerStore.threadExtras()
                 var messages: [JSONValue] = []
                 var usedRollout = false
-                if let rolloutPath = extras[threadID]?.rolloutPath,
-                   !rolloutPath.isEmpty,
+                var rolloutPath = extras[threadID]?.rolloutPath
+                if rolloutPath == nil || rolloutPath!.isEmpty {
+                    // state_5 可能被 daemon 锁住读不到，改用 thread/list 返回的 path 字段兜底。
+                    if let list = try? await appServer.listThreads(limit: 50),
+                       let data = list["data"]?.arrayValue,
+                       let item = data.first(where: { $0["id"]?.stringValue == threadID }) {
+                        rolloutPath = item["path"]?.stringValue
+                        RelayFileLog.append(
+                            "loadThreadHistory path from thread/list: \(rolloutPath ?? "nil")"
+                        )
+                    }
+                }
+                RelayFileLog.append(
+                    "loadThreadHistory extras=\(extras.count) thread=\(threadID) path=\(rolloutPath ?? "nil")"
+                )
+                if let rolloutPath, !rolloutPath.isEmpty,
                    FileManager.default.isReadableFile(atPath: rolloutPath) {
                     usedRollout = true
+                    RelayFileLog.append("loadThreadHistory readable=true")
                     let url = URL(fileURLWithPath: rolloutPath)
                     messages = await Task.detached {
                         RolloutHistoryParser.extractMessages(from: url)
                     }.value
                     RelayFileLog.append(
                         "loadThreadHistory rollout path=\(rolloutPath) messages=\(messages.count)"
+                    )
+                } else {
+                    RelayFileLog.append(
+                        "loadThreadHistory rollout unavailable readable=\(FileManager.default.isReadableFile(atPath: rolloutPath ?? ""))"
                     )
                 }
                 if usedRollout {

@@ -229,54 +229,27 @@ struct CCSwitchProviderStore: Sendable {
     // MARK: - Codex 线程附加信息（置顶 / 按会话模型）
 
     /// 从 Codex 桌面状态库读取线程附加信息（is_pinned / model），供手机端置顶与按会话模型展示。
-    /// 异步 + 4 秒超时 + busy_timeout，避免 Codex daemon 持有 DB 锁时把中继指令循环堵死。
+    /// 在后台线程运行，sqlite3 子进程带硬超时（到点 terminate），避免 daemon 持锁时卡死中继。
     func threadExtras() async -> [String: ThreadExtra] {
-        let payload: ThreadExtrasPayload = await withTaskGroup(of: ThreadExtrasPayload.self) { group in
-            group.addTask { ThreadExtrasPayload(items: Self.queryThreadExtrasSync()) }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(4))
-                return ThreadExtrasPayload(items: [:])
-            }
-            let first = await group.next() ?? ThreadExtrasPayload(items: [:])
-            group.cancelAll()
-            return first
-        }
-        return payload.items
+        await Task.detached(priority: .utility) {
+            Self.queryThreadExtrasSync(timeout: 4)
+        }.value
     }
 
     /// 写回线程置顶状态（与桌面 Codex 一致）。成功返回 true。
     func setThreadPinned(threadID: String, pinned: Bool) async -> Bool {
-        let payload: ThreadPinPayload = await withTaskGroup(of: ThreadPinPayload.self) { group in
-            group.addTask {
-                let escaped = threadID.replacingOccurrences(of: "'", with: "''")
-                let value = pinned ? "1" : "0"
-                let sql = "PRAGMA busy_timeout=2000; UPDATE threads SET is_pinned=\(value) WHERE id='\(escaped)';"
-                let ok = Self.runSQLiteWrite(stateDBPath: Self.codexStateDatabasePath, sql: sql)
-                return ThreadPinPayload(value: ok)
-            }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(4))
-                return ThreadPinPayload(value: false)
-            }
-            let first = await group.next() ?? ThreadPinPayload(value: false)
-            group.cancelAll()
-            return first
-        }
-        return payload.value
+        await Task.detached(priority: .utility) {
+            let escaped = threadID.replacingOccurrences(of: "'", with: "''")
+            let value = pinned ? "1" : "0"
+            let sql = "PRAGMA busy_timeout=2000; UPDATE threads SET is_pinned=\(value) WHERE id='\(escaped)';"
+            return Self.runSQLiteWrite(stateDBPath: Self.codexStateDatabasePath, sql: sql, timeout: 4)
+        }.value
     }
 
     private static let codexStateDatabasePath = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".codex/state_5.sqlite").path
 
-    private struct ThreadExtrasPayload: @unchecked Sendable {
-        let items: [String: ThreadExtra]
-    }
-
-    private struct ThreadPinPayload: @unchecked Sendable {
-        let value: Bool
-    }
-
-    private static func queryThreadExtrasSync() -> [String: ThreadExtra] {
+    private static func queryThreadExtrasSync(timeout: TimeInterval) -> [String: ThreadExtra] {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
@@ -289,11 +262,31 @@ struct CCSwitchProviderStore: Sendable {
             """
         ]
         process.standardOutput = output
-        guard (try? process.run()) != nil else { return [:] }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return [:] }
+        process.standardError = output
+        guard (try? process.run()) != nil else {
+            RelayFileLog.append("threadExtras: run failed path=\(codexStateDatabasePath)")
+            return [:]
+        }
+        let semaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in semaphore.signal() }
+        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            _ = semaphore.wait(timeout: .now() + 1)
+            RelayFileLog.append("threadExtras: sqlite timed out, terminated")
+            return [:]
+        }
         let data = output.fileHandleForReading.readDataToEndOfFile()
-        guard let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [:] }
+        guard process.terminationStatus == 0 else {
+            let errorText = String(data: data, encoding: .utf8) ?? ""
+            RelayFileLog.append(
+                "threadExtras: sqlite failed status=\(process.terminationStatus) err=\(String(errorText.prefix(200)))"
+            )
+            return [:]
+        }
+        guard let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            RelayFileLog.append("threadExtras: json parse failed bytes=\(data.count)")
+            return [:]
+        }
         var result: [String: ThreadExtra] = [:]
         for row in rows {
             guard let id = row["id"] as? String, !id.isEmpty else { continue }
@@ -302,10 +295,15 @@ struct CCSwitchProviderStore: Sendable {
             let rolloutPath = row["rollout_path"] as? String
             result[id] = ThreadExtra(pinned: pinned, model: model, rolloutPath: rolloutPath)
         }
+        RelayFileLog.append("threadExtras: rows=\(rows.count) parsed=\(result.count)")
         return result
     }
 
-    private static func runSQLiteWrite(stateDBPath: String, sql: String) -> Bool {
+    private static func runSQLiteWrite(
+        stateDBPath: String,
+        sql: String,
+        timeout: TimeInterval = 4
+    ) -> Bool {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
@@ -313,7 +311,13 @@ struct CCSwitchProviderStore: Sendable {
         process.standardOutput = pipe
         process.standardError = pipe
         guard (try? process.run()) != nil else { return false }
-        process.waitUntilExit()
+        let semaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in semaphore.signal() }
+        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            _ = semaphore.wait(timeout: .now() + 1)
+            return false
+        }
         return process.terminationStatus == 0
     }
 

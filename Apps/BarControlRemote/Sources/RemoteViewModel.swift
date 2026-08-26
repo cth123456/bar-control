@@ -171,7 +171,9 @@ final class RemoteViewModel: ObservableObject {
         // 再补中继事件里出现、但不在线程列表里的会话
         var buckets: [String: [RemoteEvent]] = [:]
         for event in events {
-            guard let threadID = event.threadID, !threadID.isEmpty, event.title != "Codex 会话消息" else { continue }
+            guard let threadID = event.threadID, !threadID.isEmpty,
+                  event.title != "Codex 会话消息",
+                  event.title != "历史读取失败" else { continue }
             buckets[threadID, default: []].append(event)
         }
         for (id, list) in buckets where byID[id] == nil {
@@ -292,8 +294,8 @@ final class RemoteViewModel: ObservableObject {
     var displayItems: [RemoteDisplayItem] {
         var items: [RemoteDisplayItem] = []
         for event in events {
-            // “Codex 会话消息”只是历史正文的载体，不直接渲染成系统行。
-            if event.title == "Codex 会话消息" { continue }
+            // “Codex 会话消息”只是历史正文的载体，“历史读取失败”是临时诊断，都不直接渲染。
+            if event.title == "Codex 会话消息" || event.title == "历史读取失败" { continue }
             if event.kind == .agentMessageDelta,
                let lastIndex = items.indices.last,
                items[lastIndex].kind == .agentMessageDelta,
