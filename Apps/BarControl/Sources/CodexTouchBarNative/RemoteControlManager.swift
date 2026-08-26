@@ -434,16 +434,58 @@ final class RemoteControlManager {
                 guard let threadID = command.threadID else {
                     throw CodexAppServerError.invalidResponse("读取会话消息缺少会话 ID")
                 }
-                let messages = try await appServer.threadMessages(threadID: threadID)
-                let data = try JSONEncoder().encode(messages)
-                let text = String(decoding: data, as: UTF8.self)
-                _ = try await eventStore.append(
-                    sessionID: command.id.uuidString,
-                    kind: .transcript,
-                    title: "Codex 会话消息",
-                    text: text,
-                    threadID: threadID
-                )
+                // 优先直接解析 rollout 落地文件（Codex+ 等第三方客户端的主流做法），
+                // 不受 app-server 活动写者/paginated lineage 影响；文件缺失时退回 thread/read。
+                let extras = await providerStore.threadExtras()
+                var messages: [JSONValue] = []
+                var usedRollout = false
+                if let rolloutPath = extras[threadID]?.rolloutPath,
+                   !rolloutPath.isEmpty,
+                   FileManager.default.isReadableFile(atPath: rolloutPath) {
+                    usedRollout = true
+                    let url = URL(fileURLWithPath: rolloutPath)
+                    messages = await Task.detached {
+                        RolloutHistoryParser.extractMessages(from: url)
+                    }.value
+                    RelayFileLog.append(
+                        "loadThreadHistory rollout path=\(rolloutPath) messages=\(messages.count)"
+                    )
+                }
+                if usedRollout {
+                    let data = try JSONEncoder().encode(messages)
+                    let text = String(decoding: data, as: UTF8.self)
+                    _ = try await eventStore.append(
+                        sessionID: command.id.uuidString,
+                        kind: .transcript,
+                        title: "Codex 会话消息",
+                        text: text,
+                        threadID: threadID
+                    )
+                } else {
+                    do {
+                        let appMessages = try await appServer.threadMessages(threadID: threadID)
+                        let data = try JSONEncoder().encode(appMessages)
+                        let text = String(decoding: data, as: UTF8.self)
+                        _ = try await eventStore.append(
+                            sessionID: command.id.uuidString,
+                            kind: .transcript,
+                            title: "Codex 会话消息",
+                            text: text,
+                            threadID: threadID
+                        )
+                    } catch {
+                        RelayFileLog.append("loadThreadHistory failed: \(error.localizedDescription)")
+                        _ = try await eventStore.append(
+                            sessionID: command.id.uuidString,
+                            kind: .warning,
+                            title: "历史读取失败",
+                            text: "该会话正文暂不可读：\(error.localizedDescription)",
+                            threadID: threadID
+                        )
+                        // thread/read 可能把 app-server 卡在“活动写者”上，重启它以恢复后续请求。
+                        try? await appServer.restart()
+                    }
+                }
             case .healthCheck:
                 _ = try await appServer.listThreads(limit: 1)
                 _ = try await eventStore.append(
@@ -469,46 +511,35 @@ final class RemoteControlManager {
     /// 通过官方 app-server thread/list 读取最近会话摘要，合并桌面端置顶/按会话模型信息，
     /// 供手机端展示历史会话列表。带 5 秒兜底，避免 app-server 无响应时卡死中继指令循环。
     private func listThreadSummaries() async -> [[String: Any]] {
-        let payload: ThreadListPayload = await withTaskGroup(of: ThreadListPayload.self) { group in
-            group.addTask {
-                do {
-                    let result = try await self.appServer.listThreads(limit: 50)
-                    let extras = await self.providerStore.threadExtras()
-                    var summaries: [[String: Any]] = []
-                    for item in (result["data"]?.arrayValue ?? []) {
-                        guard let id = item["id"]?.stringValue, !id.isEmpty else { continue }
-                        let updatedAt = item["updatedAt"]?.int64Value ?? 0
-                        let extra = extras[id]
-                        let cwd = item["cwd"]?.stringValue ?? ""
-                        summaries.append([
-                            "id": id,
-                            "title": item["name"]?.stringValue ?? "",
-                            "preview": item["preview"]?.stringValue ?? "",
-                            "model": extra?.model ?? item["modelProvider"]?.stringValue ?? "",
-                            "updated_ms": updatedAt * 1000,
-                            "pinned": extra?.pinned ?? false,
-                            "cwd": cwd,
-                            "projectFolder": Self.projectFolderName(
-                                cwd: cwd,
-                                gitURL: item["gitInfo"]?["originUrl"]?.stringValue
-                            )
-                        ])
-                    }
-                    return ThreadListPayload(items: summaries)
-                } catch {
-                    RelayFileLog.append("listThreads failed: \(error.localizedDescription)")
-                    return ThreadListPayload(items: [])
-                }
+        do {
+            let result = try await appServer.listThreads(limit: 50)
+            let extras = await providerStore.threadExtras()
+            var summaries: [[String: Any]] = []
+            for item in (result["data"]?.arrayValue ?? []) {
+                guard let id = item["id"]?.stringValue, !id.isEmpty else { continue }
+                let updatedAt = item["updatedAt"]?.int64Value ?? 0
+                let extra = extras[id]
+                let cwd = item["cwd"]?.stringValue ?? ""
+                summaries.append([
+                    "id": id,
+                    "title": item["name"]?.stringValue ?? "",
+                    "preview": item["preview"]?.stringValue ?? "",
+                    "model": extra?.model ?? item["modelProvider"]?.stringValue ?? "",
+                    "updated_ms": updatedAt * 1000,
+                    "pinned": extra?.pinned ?? false,
+                    "active": item["status"]?["type"]?.stringValue == "active",
+                    "cwd": cwd,
+                    "projectFolder": Self.projectFolderName(
+                        cwd: cwd,
+                        gitURL: item["gitInfo"]?["originUrl"]?.stringValue
+                    )
+                ])
             }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(5))
-                return ThreadListPayload(items: [])
-            }
-            let first = await group.next() ?? ThreadListPayload(items: [])
-            group.cancelAll()
-            return first
+            return summaries
+        } catch {
+            RelayFileLog.append("listThreads failed: \(error.localizedDescription)")
+            return []
         }
-        return payload.items
     }
 
     private func emitThreadListEvent(sessionID: String) async throws {
@@ -542,10 +573,6 @@ final class RemoteControlManager {
         }
         let trimmed = cwd.split(separator: "/").last.map(String.init) ?? ""
         return trimmed.isEmpty ? cwd : trimmed
-    }
-
-    private struct ThreadListPayload: @unchecked Sendable {
-        let items: [[String: Any]]
     }
 
     private func interpretAndExecute(_ command: RemoteCommand) async {

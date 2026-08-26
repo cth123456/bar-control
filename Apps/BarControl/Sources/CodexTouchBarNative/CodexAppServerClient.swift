@@ -107,7 +107,8 @@ actor CodexAppServerClient {
                 "capabilities": .object([
                     "experimentalApi": .bool(true)
                 ])
-            ])
+            ]),
+            timeout: .seconds(15)
         )
         try sendNotification(method: "initialized", params: .object([:]))
         initialized = true
@@ -276,7 +277,8 @@ actor CodexAppServerClient {
                 "limit": .number(Double(limit)),
                 "sortKey": .string("updated_at"),
                 "modelProviders": .array([])
-            ])
+            ]),
+            timeout: .seconds(10)
         )
     }
 
@@ -288,7 +290,8 @@ actor CodexAppServerClient {
             params: .object([
                 "threadId": .string(threadID),
                 "includeTurns": .bool(true)
-            ])
+            ]),
+            timeout: .seconds(10)
         )
         guard let turns = result["thread"]?["turns"]?.arrayValue else { return [] }
         var messages: [JSONValue] = []
@@ -326,12 +329,20 @@ actor CodexAppServerClient {
         return blocks.compactMap { $0["text"]?.stringValue }.joined(separator: "\n")
     }
 
-    private func sendRequest(method: String, params: JSONValue) async throws -> JSONValue {
+    private func sendRequest(
+        method: String,
+        params: JSONValue,
+        timeout: Duration = .seconds(30)
+    ) async throws -> JSONValue {
         try await start()
-        return try await sendRequestWithoutStarting(method: method, params: params)
+        return try await sendRequestWithoutStarting(method: method, params: params, timeout: timeout)
     }
 
-    private func sendRequestWithoutStarting(method: String, params: JSONValue) async throws -> JSONValue {
+    private func sendRequestWithoutStarting(
+        method: String,
+        params: JSONValue,
+        timeout: Duration
+    ) async throws -> JSONValue {
         guard process?.isRunning == true else { throw CodexAppServerError.notRunning }
         let requestID = nextRequestID
         nextRequestID += 1
@@ -347,7 +358,19 @@ actor CodexAppServerClient {
                 pending.removeValue(forKey: requestID)
                 continuation.resume(throwing: error)
             }
+            Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                await self?.failPending(
+                    requestID: requestID,
+                    error: CodexAppServerError.remoteError("Codex 请求超时：\(method)")
+                )
+            }
         }
+    }
+
+    private func failPending(requestID: Int64, error: Error) {
+        guard let continuation = pending.removeValue(forKey: requestID) else { return }
+        continuation.resume(throwing: error)
     }
 
     private func sendNotification(method: String, params: JSONValue) throws {

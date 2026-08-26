@@ -24,6 +24,7 @@ struct RemoteConversation: Identifiable, Codable, Equatable {
     var projectFolder: String
     var cwd: String
     var model: String
+    var active: Bool
 
     init(
         id: String,
@@ -34,7 +35,8 @@ struct RemoteConversation: Identifiable, Codable, Equatable {
         pinned: Bool = false,
         projectFolder: String = "",
         cwd: String = "",
-        model: String = ""
+        model: String = "",
+        active: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -45,6 +47,39 @@ struct RemoteConversation: Identifiable, Codable, Equatable {
         self.projectFolder = projectFolder
         self.cwd = cwd
         self.model = model
+        self.active = active
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, subtitle, updatedAt, messageCount, pinned, projectFolder, cwd, model, active
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? "会话 \(id.prefix(8))"
+        subtitle = try container.decodeIfPresent(String.self, forKey: .subtitle) ?? ""
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        messageCount = try container.decodeIfPresent(Int.self, forKey: .messageCount) ?? 0
+        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+        projectFolder = try container.decodeIfPresent(String.self, forKey: .projectFolder) ?? ""
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd) ?? ""
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        active = try container.decodeIfPresent(Bool.self, forKey: .active) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(subtitle, forKey: .subtitle)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(messageCount, forKey: .messageCount)
+        try container.encode(pinned, forKey: .pinned)
+        try container.encode(projectFolder, forKey: .projectFolder)
+        try container.encode(cwd, forKey: .cwd)
+        try container.encode(model, forKey: .model)
+        try container.encode(active, forKey: .active)
     }
 }
 
@@ -185,6 +220,10 @@ final class RemoteViewModel: ObservableObject {
     var selectedConversation: RemoteConversation? {
         guard let selectedThreadID else { return nil }
         return codexThreads.first { $0.id == selectedThreadID }
+    }
+
+    var selectedConversationIsActive: Bool {
+        selectedConversation?.active ?? false
     }
 
     var currentThreadModelName: String? {
@@ -477,18 +516,23 @@ final class RemoteViewModel: ObservableObject {
         isNewConversation = false
         selectedThreadID = id
         selectedConversationTitle = title
-        loadingHistoryThreadID = id
-        Task {
-            await refreshFiles()
-            if isConnected {
-                await sendCommand(type: .loadThreadHistory, threadID: id)
-            } else {
-                loadingHistoryThreadID = nil
+        if codexThreads.first(where: { $0.id == id })?.active == true {
+            // 正在运行的会话正文不可读（thread/read 会等写者释放），直接显示运行提示/实时消息。
+            loadingHistoryThreadID = nil
+        } else {
+            loadingHistoryThreadID = id
+            Task {
+                await refreshFiles()
+                if isConnected {
+                    await sendCommand(type: .loadThreadHistory, threadID: id)
+                } else {
+                    loadingHistoryThreadID = nil
+                }
             }
-        }
-        Task {
-            try? await Task.sleep(for: .seconds(8))
-            if loadingHistoryThreadID == id { loadingHistoryThreadID = nil }
+            Task {
+                try? await Task.sleep(for: .seconds(8))
+                if loadingHistoryThreadID == id { loadingHistoryThreadID = nil }
+            }
         }
     }
 
@@ -769,6 +813,7 @@ final class RemoteViewModel: ObservableObject {
                 let model = (item["model"] as? String) ?? ""
                 let updatedMS = (item["updated_ms"] as? NSNumber)?.doubleValue ?? 0
                 let pinned = (item["pinned"] as? NSNumber)?.boolValue ?? false
+                let active = (item["active"] as? NSNumber)?.boolValue ?? false
                 let cwd = (item["cwd"] as? String) ?? ""
                 let projectFolder = (item["projectFolder"] as? String) ?? Self.folderName(from: cwd)
                 let threadModel = threadModels[id] ?? model
@@ -781,7 +826,8 @@ final class RemoteViewModel: ObservableObject {
                     pinned: pinned,
                     projectFolder: projectFolder,
                     cwd: cwd,
-                    model: threadModel
+                    model: threadModel,
+                    active: active
                 )
             }
             saveCacheIfNeeded(force: true)

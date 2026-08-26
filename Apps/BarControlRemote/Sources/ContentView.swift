@@ -120,7 +120,14 @@ struct ContentView: View {
                         approvalCard(approval)
                     }
                     if model.threadDisplayItems.isEmpty {
-                        if model.loadingHistoryThreadID == model.selectedThreadID {
+                        if model.selectedConversationIsActive {
+                            ContentUnavailableView(
+                                "会话正在运行中",
+                                systemImage: "bolt.fill",
+                                description: Text("该会话正在 Mac 上运行，正文在桌面端可见；可在此发送新消息。")
+                            )
+                            .padding(.top, 80)
+                        } else if model.loadingHistoryThreadID == model.selectedThreadID {
                             VStack(spacing: 12) {
                                 ProgressView()
                                 Text("正在加载会话历史…")

@@ -285,7 +285,7 @@ struct CCSwitchProviderStore: Sendable {
             "file:\(codexStateDatabasePath)?mode=ro",
             """
             PRAGMA busy_timeout=2000;
-            SELECT id, is_pinned, model FROM threads;
+            SELECT id, is_pinned, model, rollout_path FROM threads;
             """
         ]
         process.standardOutput = output
@@ -299,7 +299,8 @@ struct CCSwitchProviderStore: Sendable {
             guard let id = row["id"] as? String, !id.isEmpty else { continue }
             let pinned = (row["is_pinned"] as? NSNumber)?.boolValue ?? false
             let model = row["model"] as? String
-            result[id] = ThreadExtra(pinned: pinned, model: model)
+            let rolloutPath = row["rollout_path"] as? String
+            result[id] = ThreadExtra(pinned: pinned, model: model, rolloutPath: rolloutPath)
         }
         return result
     }
@@ -858,4 +859,5 @@ struct CCSwitchProviderStore: Sendable {
 struct ThreadExtra: Sendable {
     let pinned: Bool
     let model: String?
+    let rolloutPath: String?
 }
