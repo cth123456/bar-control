@@ -138,6 +138,9 @@ final class RemoteViewModel: ObservableObject {
     @Published private(set) var isSwitchingModel = false
     @Published private(set) var pendingMessages: [PendingMessage] = []
     @Published var showingLocalChat = false
+    @Published var localModelName: String {
+        didSet { UserDefaults.standard.set(localModelName, forKey: "remote.localModelName.v1") }
+    }
     @Published var filterProject: String?
     @Published var prompt = ""
     @Published var workingDirectory = "/Users/mac/Documents/Obsidian Vault"
@@ -161,6 +164,7 @@ final class RemoteViewModel: ObservableObject {
     private var lastFetchedEventDate = Date(timeIntervalSince1970: 0)
 
     init() {
+        localModelName = UserDefaults.standard.string(forKey: "remote.localModelName.v1") ?? ""
         let cache = Self.loadCache()
         events = cache.events
         lastFetchedEventDate = cache.events.map(\.createdAt).max() ?? Date(timeIntervalSince1970: 0)
@@ -279,13 +283,13 @@ final class RemoteViewModel: ObservableObject {
     var localChatItems: [RemoteDisplayItem] {
         displayItems.filter {
             $0.threadID == RemoteControlConstants.localChatThreadID
-                && ($0.kind == .userInput || $0.kind == .localAssistantMessage || $0.kind == .error)
+                && ($0.kind == .userInput || $0.kind == .agentMessageDelta || $0.kind == .error)
         }
     }
 
     private static func isChatItem(_ kind: RemoteEventKind) -> Bool {
         switch kind {
-        case .userInput, .agentMessageDelta, .turnFailed, .error:
+        case .userInput, .agentMessageDelta, .reasoningSummaryDelta, .turnFailed, .error:
             return true
         default:
             return false
@@ -370,6 +374,24 @@ final class RemoteViewModel: ObservableObject {
                     sessionID: last.sessionID,
                     threadID: last.threadID
                 )
+            } else if event.kind == .reasoningSummaryDelta,
+                      let lastIndex = items.indices.last,
+                      items[lastIndex].kind == .reasoningSummaryDelta,
+                      items[lastIndex].turnID != nil,
+                      items[lastIndex].turnID == event.turnID {
+                let last = items[lastIndex]
+                items[lastIndex] = RemoteDisplayItem(
+                    id: last.id,
+                    kind: last.kind,
+                    title: last.title,
+                    text: last.text + event.text,
+                    sequence: event.sequence,
+                    createdAt: last.createdAt,
+                    turnID: last.turnID,
+                    itemID: last.itemID,
+                    sessionID: last.sessionID,
+                    threadID: last.threadID
+                )
             } else {
                 items.append(RemoteDisplayItem(
                     id: event.id,
@@ -412,7 +434,7 @@ final class RemoteViewModel: ObservableObject {
                 guard let self else { return }
                 if self.isConnected {
                     await self.refresh()
-                    try? await Task.sleep(for: .seconds(1))
+                    try? await Task.sleep(for: .milliseconds(500))
                 } else {
                     await self.connectAndBootstrap()
                     try? await Task.sleep(for: .seconds(3))
@@ -621,7 +643,8 @@ final class RemoteViewModel: ObservableObject {
         let ok = await sendCommand(
             type: .localPrompt,
             text: text,
-            threadID: RemoteControlConstants.localChatThreadID
+            threadID: RemoteControlConstants.localChatThreadID,
+            modelID: localModelName.isEmpty ? nil : localModelName
         )
         if !ok { markPendingFailed(text) }
     }
@@ -638,6 +661,12 @@ final class RemoteViewModel: ObservableObject {
         selectedConversationTitle = title
         if codexThreads.first(where: { $0.id == id })?.active == true {
             // 正在运行的会话正文不可读（thread/read 会等写者释放），直接显示运行提示/实时消息。
+            loadingHistoryThreadID = nil
+        } else if let cached = threadHistory[id],
+                  !cached.isEmpty,
+                  let newest = cached.map(\.createdAt).max(),
+                  Date().timeIntervalSince(newest) < 600 {
+            // 本地已有 10 分钟内的历史缓存，直接显示，不再请求 Mac 重新解析。
             loadingHistoryThreadID = nil
         } else {
             loadingHistoryThreadID = id

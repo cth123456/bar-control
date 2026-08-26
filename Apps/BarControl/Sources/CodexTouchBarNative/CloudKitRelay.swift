@@ -176,7 +176,7 @@ actor CloudKitRelay {
         pendingEvents.append(event)
         guard flushTask == nil else { return }
         flushTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(220))
+            try? await Task.sleep(for: .milliseconds(50))
             await self?.flushEvents()
         }
     }

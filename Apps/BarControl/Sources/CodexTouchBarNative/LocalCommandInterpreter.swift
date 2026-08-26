@@ -150,6 +150,78 @@ struct LocalCommandInterpreter: Sendable {
         }
     }
 
+    /// 列出本机 Ollama 已安装的模型（用于选择本地聊天模型，不硬编码某个模型）。
+    func availableModels() async -> [String] {
+        guard let tagsURL = URL(string: "http://127.0.0.1:11434/api/tags") else { return [] }
+        var urlRequest = URLRequest(url: tagsURL)
+        urlRequest.timeoutInterval = 5
+        guard
+            let (data, response) = try? await URLSession.shared.data(for: urlRequest),
+            (response as? HTTPURLResponse)?.statusCode == 200,
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let models = object["models"] as? [[String: Any]]
+        else { return [] }
+        return models.compactMap { $0["name"] as? String }.filter { !$0.isEmpty }
+    }
+
+    /// 流式调用本地 Ollama，逐块产出文本（手机端本地聊天用，避免等整段生成完才显示）。
+    func chatStream(_ text: String, model: String) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    continuation.finish()
+                    return
+                }
+                let system = """
+                你是用户 Mac 上本地运行的 AI 助手（\(model)，Ollama）。用中文简洁回答；\
+                涉及代码时给出可以直接使用的代码。你只运行在本机，不连接 Codex 账号或网络。
+                """
+                let request = OllamaRequest(
+                    model: model,
+                    messages: [
+                        .init(role: "system", content: system),
+                        .init(role: "user", content: trimmed)
+                    ],
+                    stream: true,
+                    format: nil,
+                    keepAlive: "10m"
+                )
+                do {
+                    var urlRequest = URLRequest(url: endpoint)
+                    urlRequest.httpMethod = "POST"
+                    urlRequest.timeoutInterval = 180
+                    urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    urlRequest.httpBody = try JSONEncoder().encode(request)
+                    let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
+                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                        continuation.finish(throwing: OllamaError.httpStatus)
+                        return
+                    }
+                    for try await line in bytes.lines {
+                        guard let data = line.data(using: .utf8),
+                              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                        else { continue }
+                        if let content = (object["message"] as? [String: Any])?["content"] as? String,
+                           !content.isEmpty {
+                            continuation.yield(content)
+                        }
+                        if (object["done"] as? Bool) == true { break }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private enum OllamaError: LocalizedError {
+        case httpStatus
+        var errorDescription: String? { "Ollama 返回了非 200 状态" }
+    }
+
     private func deterministicIntent(
         _ text: String,
         providers: [RemoteProviderSummary]

@@ -548,6 +548,14 @@ struct ContentView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
+                Section("本地模型") {
+                    TextField("Ollama 模型名（留空自动选择）", text: $model.localModelName)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Text("例如 qwen2.5:7b、llama3.1:8b。留空时自动使用本机 Ollama 的第一个可用模型。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 Section("同步") {
                     Button("立即刷新") { Task { await model.refresh() } }
                     Button("清除手机时间线", role: .destructive) { model.clearLocalTimeline() }
@@ -642,6 +650,8 @@ private struct MessageRow: View {
                     .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 Spacer(minLength: 60)
             }
+        case .reasoningSummaryDelta:
+            ReasoningRow(item: item)
         default:
             SystemEventRow(item: item)
         }
@@ -671,6 +681,27 @@ private struct MessageRow: View {
             .replacingOccurrences(of: "`", with: "")
             .replacingOccurrences(of: "**", with: "")
             .replacingOccurrences(of: "*", with: "")
+    }
+}
+
+private struct ReasoningRow: View {
+    let item: RemoteDisplayItem
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            Text(item.text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Label("思考过程", systemImage: "brain.head.profile")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 

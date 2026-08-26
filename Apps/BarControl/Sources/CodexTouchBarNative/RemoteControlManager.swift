@@ -356,24 +356,57 @@ final class RemoteControlManager {
                     text: text,
                     threadID: chatThread
                 )
-                // 异步调用本地 Ollama，不阻塞中继循环。
+                // 异步流式调用本地 Ollama，不阻塞中继循环。
                 Task { [weak self] in
                     guard let self else { return }
-                    let reply = await self.interpreter.chat(text)
-                    if reply.isEmpty {
+                    // 模型选择：手机端可指定；否则取本机 Ollama 第一个可用模型。
+                    let modelID: String
+                    if let requested = command.modelID, !requested.isEmpty {
+                        modelID = requested
+                    } else {
+                        let available = await self.interpreter.availableModels()
+                        modelID = available.first ?? "local-siri-qwen:latest"
+                    }
+                    let turnID = UUID().uuidString
+                    _ = try? await self.eventStore.append(
+                        sessionID: command.id.uuidString,
+                        kind: .turnStarted,
+                        title: "本地模型 · \(modelID)",
+                        text: "",
+                        threadID: chatThread,
+                        turnID: turnID
+                    )
+                    do {
+                        var emitted = false
+                        for try await chunk in self.interpreter.chatStream(text, model: modelID) {
+                            emitted = true
+                            _ = try? await self.eventStore.append(
+                                sessionID: command.id.uuidString,
+                                kind: .agentMessageDelta,
+                                title: "本地模型",
+                                text: chunk,
+                                threadID: chatThread,
+                                turnID: turnID,
+                                itemID: turnID
+                            )
+                        }
+                        guard emitted else {
+                            throw CCSwitchError.configUnavailable
+                        }
+                        _ = try? await self.eventStore.append(
+                            sessionID: command.id.uuidString,
+                            kind: .turnCompleted,
+                            title: "本地模型",
+                            text: "",
+                            threadID: chatThread,
+                            turnID: turnID
+                        )
+                    } catch {
                         _ = try? await self.eventStore.append(
                             sessionID: command.id.uuidString,
                             kind: .error,
-                            title: "本地模型不可用",
-                            text: "Ollama 未响应，请确认本地 Ollama 正在运行（127.0.0.1:11434）",
-                            threadID: chatThread
-                        )
-                    } else {
-                        _ = try? await self.eventStore.append(
-                            sessionID: command.id.uuidString,
-                            kind: .localAssistantMessage,
-                            title: "本地模型",
-                            text: reply,
+                            title: "本地模型未响应",
+                            text: "Ollama（\(modelID)）无输出，请确认模型已安装且 Ollama 正在运行",
                             threadID: chatThread
                         )
                     }
