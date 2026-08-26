@@ -120,12 +120,22 @@ struct ContentView: View {
                         approvalCard(approval)
                     }
                     if model.threadDisplayItems.isEmpty {
-                        ContentUnavailableView(
-                            "还没有消息",
-                            systemImage: "text.bubble",
-                            description: Text("输入指令开始对话。")
-                        )
-                        .padding(.top, 80)
+                        if model.loadingHistoryThreadID == model.selectedThreadID {
+                            VStack(spacing: 12) {
+                                ProgressView()
+                                Text("正在加载会话历史…")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.top, 80)
+                        } else {
+                            ContentUnavailableView(
+                                "还没有消息",
+                                systemImage: "text.bubble",
+                                description: Text("输入指令开始对话。")
+                            )
+                            .padding(.top, 80)
+                        }
                     } else {
                         ForEach(model.threadDisplayItems) { item in
                             MessageRow(item: item)

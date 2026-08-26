@@ -280,6 +280,52 @@ actor CodexAppServerClient {
         )
     }
 
+    /// 读取一个会话的历史消息（userMessage / agentMessage），按时间顺序返回
+    /// [{role, text, seq}]，供手机端展示桌面 Codex 的既有对话正文。
+    func threadMessages(threadID: String) async throws -> [JSONValue] {
+        let result = try await sendRequest(
+            method: "thread/read",
+            params: .object([
+                "threadId": .string(threadID),
+                "includeTurns": .bool(true)
+            ])
+        )
+        guard let turns = result["thread"]?["turns"]?.arrayValue else { return [] }
+        var messages: [JSONValue] = []
+        var seq = 0
+        for turn in turns {
+            for item in (turn["items"]?.arrayValue ?? []) {
+                let type = item["type"]?.stringValue ?? ""
+                let role: String?
+                let text: String
+                if type == "userMessage" {
+                    role = "user"
+                    text = Self.contentText(from: item["content"])
+                } else if type == "agentMessage" {
+                    role = "assistant"
+                    text = item["text"]?.stringValue ?? ""
+                } else {
+                    role = nil
+                    text = ""
+                }
+                guard let role, !text.isEmpty else { continue }
+                let trimmed = String(text.prefix(4000))
+                messages.append(.object([
+                    "role": .string(role),
+                    "text": .string(trimmed),
+                    "seq": .number(Double(seq))
+                ]))
+                seq += 1
+            }
+        }
+        return Array(messages.suffix(150))
+    }
+
+    private static func contentText(from value: JSONValue?) -> String {
+        guard let blocks = value?.arrayValue else { return "" }
+        return blocks.compactMap { $0["text"]?.stringValue }.joined(separator: "\n")
+    }
+
     private func sendRequest(method: String, params: JSONValue) async throws -> JSONValue {
         try await start()
         return try await sendRequestWithoutStarting(method: method, params: params)

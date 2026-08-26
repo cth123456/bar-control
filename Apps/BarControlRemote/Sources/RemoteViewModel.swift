@@ -48,9 +48,26 @@ struct RemoteConversation: Identifiable, Codable, Equatable {
     }
 }
 
+struct RemoteThreadMessage: Identifiable, Codable, Equatable {
+    let id: UUID
+    let role: String
+    let text: String
+    let seq: Int
+    let createdAt: Date
+
+    init(role: String, text: String, seq: Int, createdAt: Date = Date()) {
+        self.id = UUID()
+        self.role = role
+        self.text = text
+        self.seq = seq
+        self.createdAt = createdAt
+    }
+}
+
 private struct RemoteCache: Codable {
     var events: [RemoteEvent] = []
     var codexThreads: [RemoteConversation] = []
+    var threadHistory: [String: [RemoteThreadMessage]] = [:]
     var providerNames: [String] = []
     var currentProviderName: String?
     var modelNames: [String] = []
@@ -70,6 +87,8 @@ final class RemoteViewModel: ObservableObject {
     @Published private(set) var currentModelName: String?
     @Published private(set) var isNewConversation = false
     @Published private(set) var codexThreads: [RemoteConversation] = []
+    @Published private(set) var threadHistory: [String: [RemoteThreadMessage]] = [:]
+    @Published private(set) var loadingHistoryThreadID: String?
     @Published private(set) var threadModels: [String: String] = [:]
     @Published var filterProject: String?
     @Published var prompt = ""
@@ -96,6 +115,7 @@ final class RemoteViewModel: ObservableObject {
         let cache = Self.loadCache()
         events = cache.events
         codexThreads = cache.codexThreads
+        threadHistory = cache.threadHistory
         providerNames = cache.providerNames
         currentProviderName = cache.currentProviderName
         modelNames = cache.modelNames
@@ -116,7 +136,7 @@ final class RemoteViewModel: ObservableObject {
         // 再补中继事件里出现、但不在线程列表里的会话
         var buckets: [String: [RemoteEvent]] = [:]
         for event in events {
-            guard let threadID = event.threadID, !threadID.isEmpty else { continue }
+            guard let threadID = event.threadID, !threadID.isEmpty, event.title != "Codex 会话消息" else { continue }
             buckets[threadID, default: []].append(event)
         }
         for (id, list) in buckets where byID[id] == nil {
@@ -174,7 +194,28 @@ final class RemoteViewModel: ObservableObject {
 
     var threadDisplayItems: [RemoteDisplayItem] {
         guard let selectedThreadID else { return [] }
-        return displayItems.filter { $0.threadID == selectedThreadID }
+        var items = historyItems(for: selectedThreadID)
+        items.append(contentsOf: displayItems.filter { $0.threadID == selectedThreadID })
+        return items
+    }
+
+    private func historyItems(for threadID: String) -> [RemoteDisplayItem] {
+        (threadHistory[threadID] ?? [])
+            .sorted { $0.seq < $1.seq }
+            .map { message in
+                RemoteDisplayItem(
+                    id: message.id,
+                    kind: message.role == "user" ? .userInput : .agentMessageDelta,
+                    title: message.role == "user" ? "你的指令" : "Codex",
+                    text: message.text,
+                    sequence: Int64(message.seq),
+                    createdAt: message.createdAt,
+                    turnID: nil,
+                    itemID: message.id.uuidString,
+                    sessionID: threadID,
+                    threadID: threadID
+                )
+            }
     }
 
     var threadFiles: [RemoteFileInfo] {
@@ -212,6 +253,8 @@ final class RemoteViewModel: ObservableObject {
     var displayItems: [RemoteDisplayItem] {
         var items: [RemoteDisplayItem] = []
         for event in events {
+            // “Codex 会话消息”只是历史正文的载体，不直接渲染成系统行。
+            if event.title == "Codex 会话消息" { continue }
             if event.kind == .agentMessageDelta,
                let lastIndex = items.indices.last,
                items[lastIndex].kind == .agentMessageDelta,
@@ -434,7 +477,19 @@ final class RemoteViewModel: ObservableObject {
         isNewConversation = false
         selectedThreadID = id
         selectedConversationTitle = title
-        Task { await refreshFiles() }
+        loadingHistoryThreadID = id
+        Task {
+            await refreshFiles()
+            if isConnected {
+                await sendCommand(type: .loadThreadHistory, threadID: id)
+            } else {
+                loadingHistoryThreadID = nil
+            }
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(8))
+            if loadingHistoryThreadID == id { loadingHistoryThreadID = nil }
+        }
     }
 
     func closeConversation() {
@@ -562,6 +617,8 @@ final class RemoteViewModel: ObservableObject {
         modelNames.removeAll()
         currentModelName = nil
         codexThreads.removeAll()
+        threadHistory.removeAll()
+        loadingHistoryThreadID = nil
         threadModels.removeAll()
         filterProject = nil
         didRequestProviders = false
@@ -587,6 +644,7 @@ final class RemoteViewModel: ObservableObject {
         let cache = RemoteCache(
             events: Array(events.suffix(800)),
             codexThreads: codexThreads,
+            threadHistory: threadHistory,
             providerNames: providerNames,
             currentProviderName: currentProviderName,
             modelNames: modelNames,
@@ -726,6 +784,21 @@ final class RemoteViewModel: ObservableObject {
                     model: threadModel
                 )
             }
+            saveCacheIfNeeded(force: true)
+        }
+        if event.title == "Codex 会话消息",
+           let data = event.text.data(using: .utf8),
+           let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+           let threadID = event.threadID, !threadID.isEmpty {
+            var messages: [RemoteThreadMessage] = []
+            for (index, item) in array.enumerated() {
+                guard let role = item["role"] as? String,
+                      let text = item["text"] as? String, !text.isEmpty else { continue }
+                let seq = (item["seq"] as? NSNumber)?.intValue ?? index
+                messages.append(RemoteThreadMessage(role: role, text: text, seq: seq))
+            }
+            threadHistory[threadID] = Array(messages.suffix(200))
+            if loadingHistoryThreadID == threadID { loadingHistoryThreadID = nil }
             saveCacheIfNeeded(force: true)
         }
     }

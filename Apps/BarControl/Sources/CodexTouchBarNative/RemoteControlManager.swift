@@ -430,6 +430,20 @@ final class RemoteControlManager {
                 if ok {
                     try await emitThreadListEvent(sessionID: command.id.uuidString)
                 }
+            case .loadThreadHistory:
+                guard let threadID = command.threadID else {
+                    throw CodexAppServerError.invalidResponse("读取会话消息缺少会话 ID")
+                }
+                let messages = try await appServer.threadMessages(threadID: threadID)
+                let data = try JSONEncoder().encode(messages)
+                let text = String(decoding: data, as: UTF8.self)
+                _ = try await eventStore.append(
+                    sessionID: command.id.uuidString,
+                    kind: .transcript,
+                    title: "Codex 会话消息",
+                    text: text,
+                    threadID: threadID
+                )
             case .healthCheck:
                 _ = try await appServer.listThreads(limit: 1)
                 _ = try await eventStore.append(

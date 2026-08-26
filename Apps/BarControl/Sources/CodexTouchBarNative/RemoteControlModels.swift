@@ -159,6 +159,7 @@ enum RemoteCommandType: String, Codable, CaseIterable, Sendable {
     case listModels
     case listThreads
     case setPinned
+    case loadThreadHistory
     case healthCheck
 }
 
