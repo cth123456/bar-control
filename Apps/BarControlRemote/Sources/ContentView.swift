@@ -650,15 +650,27 @@ private struct MessageRow: View {
     @ViewBuilder
     private var bubble: some View {
         if (item.kind == .agentMessageDelta || item.kind == .localAssistantMessage),
+           item.isFinal,
            let attributed = try? AttributedString(markdown: item.text) {
             Text(attributed)
                 .font(.callout)
                 .textSelection(.enabled)
         } else {
-            Text(item.text)
+            // 流式阶段用纯文本并去掉 markdown 符号，避免“**”之类乱码和每帧重解析卡顿；
+            // 回合结束后再整段渲染 markdown。
+            Text(Self.previewText(item))
                 .font(.callout)
                 .textSelection(.enabled)
         }
+    }
+
+    private static func previewText(_ item: RemoteDisplayItem) -> String {
+        guard !item.isFinal else { return item.text }
+        return item.text
+            .replacingOccurrences(of: "```", with: "")
+            .replacingOccurrences(of: "`", with: "")
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "*", with: "")
     }
 }
 

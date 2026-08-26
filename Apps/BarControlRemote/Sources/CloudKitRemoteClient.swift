@@ -104,13 +104,15 @@ actor CloudKitRemoteClient {
         }
     }
 
-    func fetchEvents() async throws -> [RemoteEvent] {
+    func fetchEvents(after date: Date? = nil) async throws -> [RemoteEvent] {
         guard status == .ready, let database else { return [] }
+        // 只拉上次之后的新事件，避免每次轮询全量拉取越来越大的历史记录。
+        let cutoff = (date ?? Date(timeIntervalSince1970: 0)).addingTimeInterval(-0.5)
         let query = CKQuery(
             recordType: RemoteControlConstants.eventRecordType,
             predicate: NSPredicate(
                 format: "createdAt >= %@",
-                argumentArray: [Date(timeIntervalSince1970: 0)]
+                argumentArray: [cutoff]
             )
         )
         var collected: [RemoteEvent] = []

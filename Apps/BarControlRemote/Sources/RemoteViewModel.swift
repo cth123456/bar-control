@@ -12,6 +12,7 @@ struct RemoteDisplayItem: Identifiable {
     let itemID: String?
     let sessionID: String
     let threadID: String?
+    var isFinal: Bool = true
 }
 
 struct RemoteConversation: Identifiable, Codable, Equatable {
@@ -157,10 +158,12 @@ final class RemoteViewModel: ObservableObject {
     private var pendingNewSentAt: Date?
     private var downloadedFiles: [String: URL] = [:]
     private var lastCacheSaveAt = Date.distantPast
+    private var lastFetchedEventDate = Date(timeIntervalSince1970: 0)
 
     init() {
         let cache = Self.loadCache()
         events = cache.events
+        lastFetchedEventDate = cache.events.map(\.createdAt).max() ?? Date(timeIntervalSince1970: 0)
         codexThreads = cache.codexThreads
         threadHistory = cache.threadHistory
         providerNames = cache.providerNames
@@ -382,7 +385,23 @@ final class RemoteViewModel: ObservableObject {
                 ))
             }
         }
-        return Array(items.suffix(500))
+        let completedTurns = Set(
+            events.compactMap { event -> String? in
+                guard event.kind == .turnCompleted || event.kind == .turnFailed,
+                      let turnID = event.turnID, !turnID.isEmpty else { return nil }
+                return turnID
+            }
+        )
+        return Array(items.suffix(500)).map { item in
+            if item.kind == .agentMessageDelta,
+               let turnID = item.turnID,
+               !completedTurns.contains(turnID) {
+                var copy = item
+                copy.isFinal = false
+                return copy
+            }
+            return item
+        }
     }
 
     func start() async {
@@ -420,7 +439,7 @@ final class RemoteViewModel: ObservableObject {
     func refresh() async {
         guard isConnected else { return }
         do {
-            let fetched = try await client.fetchEvents()
+            let fetched = try await client.fetchEvents(after: lastFetchedEventDate)
             var added = false
             for event in fetched where !seenEventIDs.contains(event.id) {
                 seenEventIDs.insert(event.id)
@@ -429,6 +448,9 @@ final class RemoteViewModel: ObservableObject {
                 consumeStateEvent(event)
             }
             if added {
+                if let newest = fetched.map(\.createdAt).max(), newest > lastFetchedEventDate {
+                    lastFetchedEventDate = newest
+                }
                 events.sort {
                     if $0.sequence == $1.sequence { return $0.createdAt < $1.createdAt }
                     return $0.sequence < $1.sequence
