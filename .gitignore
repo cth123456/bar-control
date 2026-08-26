@@ -9,3 +9,5 @@
 *.wav
 *.m4a
 .swiftpm/
+Apps/BarControl/.signing/
+Apps/BarControl/backups/
