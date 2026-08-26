@@ -16,10 +16,10 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            if model.selectedThreadID == nil {
-                conversationListView
-            } else {
+            if model.selectedThreadID != nil || model.isNewConversation {
                 chatDetailView
+            } else {
+                conversationListView
             }
         }
         .sheet(isPresented: $showingSettings) { settingsSheet }
@@ -84,7 +84,13 @@ struct ContentView: View {
                 providerMenu
                 modelMenu
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    model.startNewConversation()
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                }
+                .accessibilityLabel("新建会话")
                 Button {
                     showingSettings = true
                 } label: {

@@ -36,6 +36,7 @@ final class RemoteViewModel: ObservableObject {
     @Published private(set) var currentProviderName: String?
     @Published private(set) var modelNames: [String] = []
     @Published private(set) var currentModelName: String?
+    @Published private(set) var isNewConversation = false
     @Published var prompt = ""
     @Published var workingDirectory = "/Users/mac/Documents/Obsidian Vault"
     @Published var errorMessage: String?
@@ -233,6 +234,7 @@ final class RemoteViewModel: ObservableObject {
                     selectedThreadID = match.threadID
                     selectedConversationTitle = String(text.prefix(40))
                     needsFileRefresh = true
+                    isNewConversation = false
                 }
                 pendingNewText = nil
                 pendingNewSentAt = nil
@@ -336,7 +338,7 @@ final class RemoteViewModel: ObservableObject {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         prompt = ""
-        if selectedThreadID == nil {
+        if selectedThreadID == nil || isNewConversation {
             pendingNewText = text
             pendingNewSentAt = Date()
         }
@@ -349,14 +351,16 @@ final class RemoteViewModel: ObservableObject {
     }
 
     func openConversation(_ id: String, title: String) {
+        isNewConversation = false
         selectedThreadID = id
         selectedConversationTitle = title
         Task { await refreshFiles() }
     }
 
     func startNewConversation() {
+        isNewConversation = true
         selectedThreadID = nil
-        selectedConversationTitle = "远程 Codex"
+        selectedConversationTitle = "新会话"
     }
 
     func refreshFiles() async {

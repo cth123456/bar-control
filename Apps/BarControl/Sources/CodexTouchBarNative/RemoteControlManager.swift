@@ -565,7 +565,8 @@ final class RemoteControlManager {
         statusText = "正在通过 CC Switch 切换到 \(provider.name)"
         notifyChange()
 
-        let switched = try await providerStore.switchProvider(provider)
+        try providerStore.activateProviderDirect(provider)
+        let switched = provider
         let compatibility = try providerStore.reconcileCodexConfiguration(provider: switched)
         lastKnownProviderID = switched.id
         lastKnownModelID = compatibility.modelID
@@ -680,7 +681,6 @@ final class RemoteControlManager {
             threadID: threadID
         )
         statusText = "已切换到 \(target.name)，原会话可继续"
-        restartCodexDesktopApp(threadID: threadID)
     }
 
     private func resumeExistingThreadIfNeeded(
@@ -879,7 +879,8 @@ final class RemoteControlManager {
     }
 
     /// 切换供应商/模型成功后重启 ChatGPT/Codex，并重新打开原会话。
-    /// provider 兼容层已经在重启前写入，不再用 pkill 误杀 Bar Control 自己的 app-server。
+    /// 重启前先杀掉 Codex 的常驻 app-server daemon（不带 --stdio 的进程），确保它重新读取切换后的 config；
+    /// Bar Control 自己的 app-server 是 --stdio 进程，用行尾锚定避免误杀。
     private func restartCodexDesktopApp(threadID: String?) {
         let bundleID = "com.openai.codex"
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID) {
@@ -890,6 +891,11 @@ final class RemoteControlManager {
                 if NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty { break }
                 try? await Task.sleep(for: .milliseconds(300))
             }
+            let pkill = Process()
+            pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+            pkill.arguments = ["-f", "codex app-serve[r]$"]
+            try? pkill.run()
+            try? await Task.sleep(for: .milliseconds(800))
             let config = NSWorkspace.OpenConfiguration()
             _ = try? await NSWorkspace.shared.openApplication(
                 at: URL(fileURLWithPath: "/Applications/ChatGPT.app"),

@@ -290,6 +290,150 @@ struct CCSwitchProviderStore: Sendable {
         let settings_config: String
     }
 
+    // MARK: - 直写切换（不依赖辅助功能点 CC Switch 界面）
+
+    /// 直接激活供应商：合并 config.toml、写 auth.json、写 settings.json 的 currentProviderCodex、生成模型目录。
+    func activateProviderDirect(_ provider: RemoteProviderSummary) throws {
+        try backupSwitchState()
+        try setCurrentProviderInDatabase(provider.id)
+        guard let settings = providerSettings(providerID: provider.id) else {
+            throw CCSwitchError.databaseUnavailable
+        }
+        guard let targetConfig = settings["config"] as? String, !targetConfig.isEmpty else {
+            throw CCSwitchError.providerNotFound(provider.name)
+        }
+        let configURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/config.toml")
+        let current = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+        let merged = Self.mergeConfig(target: targetConfig, into: current)
+        try merged.write(to: configURL, atomically: true, encoding: .utf8)
+
+        if let auth = settings["auth"] as? [String: Any] {
+            let authURL = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".codex/auth.json")
+            let data = try JSONSerialization.data(withJSONObject: auth, options: [.sortedKeys])
+            try data.write(to: authURL, options: .atomic)
+        }
+
+        try updateCurrentProviderCodex(provider.id)
+        try? writeCatalogFile(settings: settings)
+        _ = try reconcileCodexConfiguration(provider: provider)
+    }
+
+    private func setCurrentProviderInDatabase(_ id: String) throws {
+        let sql = "UPDATE providers SET is_current=(id='\(id)') WHERE app_type='codex';"
+        try Self.runSQLite(databasePath: databaseURL.path, sql: sql)
+    }
+
+    private func updateCurrentProviderCodex(_ id: String) throws {
+        guard let data = try? Data(contentsOf: settingsURL),
+              var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { throw CCSwitchError.databaseUnavailable }
+        obj["currentProviderCodex"] = id
+        let newData = try JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])
+        try newData.write(to: settingsURL, options: .atomic)
+    }
+
+    private func writeCatalogFile(settings: [String: Any]) throws {
+        let catalogURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/cc-switch-model-catalog.json")
+        guard let mc = settings["modelCatalog"] as? [String: Any],
+              let models = mc["models"] as? [[String: Any]], !models.isEmpty else { return }
+        var entries: [[String: Any]] = []
+        for (index, m) in models.enumerated() {
+            guard let slug = m["model"] as? String else { continue }
+            let name = (m["displayName"] as? String) ?? slug
+            let levels = (m["reasoningLevels"] as? [String]) ?? ["high"]
+            let input = (m["inputModalities"] as? [String]) ?? ["text"]
+            let context = (m["contextWindow"] as? Int) ?? 1_048_576
+            let reasoning = levels.map { ["effort": $0, "description": Self.reasoningDescription($0)] }
+            let entry: [String: Any] = [
+                "slug": slug, "display_name": name, "description": name,
+                "default_reasoning_level": (m["defaultReasoningLevel"] as? String) ?? "high",
+                "supported_reasoning_levels": reasoning,
+                "shell_type": "shell_command", "visibility": "list", "supported_in_api": true,
+                "priority": 1000 + index,
+                "additional_speed_tiers": [], "service_tiers": [],
+                "availability_nux": NSNull(), "upgrade": NSNull(),
+                "model_messages": ["instructions_template": "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals."],
+                "include_skills_usage_instructions": false, "include_plugin_usage_instructions": false,
+                "include_apps_usage_instructions": true, "default_reasoning_summary": "none",
+                "support_verbosity": false, "default_verbosity": NSNull(),
+                "apply_patch_tool_type": NSNull(), "web_search_tool_type": "text",
+                "truncation_policy": ["mode": "bytes", "limit": 10_000],
+                "supports_image_detail_original": input.contains("image"),
+                "supports_parallel_tool_calls": (m["supportsParallelToolCalls"] as? Bool) ?? false,
+                "supports_reasoning_summaries": true, "supports_search_tool": false,
+                "context_window": context, "max_context_window": context,
+                "effective_context_window_percent": 95, "experimental_supported_tools": [],
+                "input_modalities": input, "use_responses_lite": false,
+                "base_instructions": "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals."
+            ]
+            entries.append(entry)
+        }
+        let catalog = ["models": entries]
+        let data = try JSONSerialization.data(withJSONObject: catalog, options: [.sortedKeys])
+        try data.write(to: catalogURL, options: .atomic)
+    }
+
+    private static func reasoningDescription(_ effort: String) -> String {
+        switch effort {
+        case "low": return "Fast responses with lighter reasoning"
+        case "medium": return "Balances speed and reasoning depth for everyday tasks"
+        case "xhigh": return "Extra high reasoning depth for complex problems"
+        case "max": return "Maximum reasoning depth for the hardest problems"
+        case "ultra": return "Maximum reasoning with automatic task delegation"
+        default: return "Greater reasoning depth for complex problems"
+        }
+    }
+
+    /// 把目标供应商模板合并进当前 config：保留当前里目标模板没定义的部分（如 [mcp_servers] 等公共段）。
+    private static func mergeConfig(target: String, into current: String) -> String {
+        let (tScalars, tSecs) = parseSections(target)
+        let (cScalars, cSecs) = parseSections(current)
+        let tHeaders = Set(tSecs.map { $0.0 })
+        let tKeys = Set(tScalars.map { $0.components(separatedBy: "=")[0].trimmingCharacters(in: .whitespaces) })
+        var out: [String] = []
+        out.append(contentsOf: tScalars)
+        for line in cScalars {
+            let key = line.components(separatedBy: "=")[0].trimmingCharacters(in: .whitespaces)
+            if !tKeys.contains(key) { out.append(line) }
+        }
+        out.append("")
+        for (header, lines) in tSecs {
+            out.append("[\(header)]")
+            out.append(contentsOf: lines)
+            out.append("")
+        }
+        for (header, lines) in cSecs where !tHeaders.contains(header) {
+            out.append("[\(header)]")
+            out.append(contentsOf: lines)
+            out.append("")
+        }
+        return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+    }
+
+    private static func parseSections(_ text: String) -> (scalars: [String], sections: [(String, [String])]) {
+        var scalars: [String] = []
+        var sections: [(String, [String])] = []
+        var curHeader: String?
+        var curLines: [String] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let s = line.trimmingCharacters(in: .whitespaces)
+            if s.hasPrefix("[") {
+                if let h = curHeader { sections.append((h, curLines)) }
+                curHeader = String(s.dropFirst().dropLast())
+                curLines = []
+            } else if curHeader != nil {
+                curLines.append(String(line))
+            } else if !s.isEmpty, s.contains("="), !s.hasPrefix("#") {
+                scalars.append(String(line))
+            }
+        }
+        if let h = curHeader { sections.append((h, curLines)) }
+        return (scalars, sections)
+    }
+
     private static func firstQuotedValue(in text: String, key: String) -> String? {
         let pattern = "(?m)^\\s*" + NSRegularExpression.escapedPattern(for: key) + "\\s*=\\s*\"([^\"]+)\""
         guard let regex = try? NSRegularExpression(pattern: pattern),
