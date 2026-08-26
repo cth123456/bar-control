@@ -149,6 +149,17 @@ struct ContentView: View {
                                 .id(item.id)
                         }
                     }
+                    if model.isAwaitingResponse {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("等待 Mac 响应…")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 60)
+                        }
+                        .padding(.vertical, 4)
+                    }
                     if !model.threadFiles.isEmpty {
                         fileSection
                     }
@@ -161,6 +172,9 @@ struct ContentView: View {
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo(identifier, anchor: .bottom)
                 }
+            }
+            .onAppear {
+                scrollToBottom(proxy)
             }
         }
         .navigationTitle(model.selectedConversationTitle)
@@ -198,6 +212,15 @@ struct ContentView: View {
             }
         }
         .safeAreaInset(edge: .bottom) { composer }
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        guard let identifier = model.threadDisplayItems.last?.id else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(identifier, anchor: .bottom)
+            }
+        }
     }
 
     private var providerMenu: some View {
@@ -269,7 +292,13 @@ struct ContentView: View {
                 }
             }
         } label: {
-            Label(model.currentThreadModelName ?? "模型", systemImage: "cpu")
+            HStack(spacing: 4) {
+                if model.isSwitchingModel {
+                    ProgressView()
+                        .controlSize(.mini)
+                }
+                Label(model.currentThreadModelName ?? "模型", systemImage: "cpu")
+            }
         }
     }
 

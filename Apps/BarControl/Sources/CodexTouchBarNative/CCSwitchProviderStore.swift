@@ -255,11 +255,10 @@ struct CCSwitchProviderStore: Sendable {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
         process.arguments = [
             "-json",
-            "file:\(codexStateDatabasePath)?mode=ro",
-            """
-            PRAGMA busy_timeout=2000;
-            SELECT id, is_pinned, model, rollout_path FROM threads;
-            """
+            // 用 URI 的 _timeout 设置 busy timeout；不要在脚本里放 PRAGMA，
+            // 否则 sqlite3 -json 会输出两个 JSON 数组导致整体解析失败。
+            "file:\(codexStateDatabasePath)?mode=ro&_timeout=2000",
+            "SELECT id, is_pinned, model, rollout_path FROM threads;"
         ]
         process.standardOutput = output
         process.standardError = output

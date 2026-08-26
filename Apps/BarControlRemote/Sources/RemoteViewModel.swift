@@ -125,6 +125,8 @@ final class RemoteViewModel: ObservableObject {
     @Published private(set) var threadHistory: [String: [RemoteThreadMessage]] = [:]
     @Published private(set) var loadingHistoryThreadID: String?
     @Published private(set) var threadModels: [String: String] = [:]
+    @Published private(set) var isAwaitingResponse = false
+    @Published private(set) var isSwitchingModel = false
     @Published var filterProject: String?
     @Published var prompt = ""
     @Published var workingDirectory = "/Users/mac/Documents/Obsidian Vault"
@@ -401,6 +403,7 @@ final class RemoteViewModel: ObservableObject {
                 }
                 pendingNewText = nil
                 pendingNewSentAt = nil
+                isAwaitingResponse = false
             }
             if needsFileRefresh {
                 needsFileRefresh = false
@@ -506,6 +509,7 @@ final class RemoteViewModel: ObservableObject {
             pendingNewText = text
             pendingNewSentAt = Date()
         }
+        isAwaitingResponse = true
         await sendCommand(
             type: .prompt,
             text: text,
@@ -621,6 +625,7 @@ final class RemoteViewModel: ObservableObject {
         }
         threadModels[selectedThreadID] = name
         saveCacheIfNeeded(force: true)
+        isSwitchingModel = true
         Task {
             await sendCommand(
                 type: .switchModel,
@@ -628,6 +633,10 @@ final class RemoteViewModel: ObservableObject {
                 threadID: selectedThreadID,
                 modelID: name
             )
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(12))
+            isSwitchingModel = false
         }
     }
 
@@ -666,6 +675,8 @@ final class RemoteViewModel: ObservableObject {
         threadHistory.removeAll()
         loadingHistoryThreadID = nil
         threadModels.removeAll()
+        isAwaitingResponse = false
+        isSwitchingModel = false
         filterProject = nil
         didRequestProviders = false
         try? FileManager.default.removeItem(at: Self.cacheURL)
@@ -790,10 +801,24 @@ final class RemoteViewModel: ObservableObject {
                 if let index = codexThreads.firstIndex(where: { $0.id == threadID }) {
                     codexThreads[index].model = event.text
                 }
+                if selectedThreadID == threadID { isSwitchingModel = false }
             } else {
                 currentModelName = event.text
             }
             if !modelNames.contains(event.text) { modelNames.append(event.text) }
+        }
+        if event.title == "已切换新会话",
+           let threadID = event.threadID, !threadID.isEmpty {
+            selectedThreadID = threadID
+            isNewConversation = false
+            selectedConversationTitle = "新会话（原会话在桌面端运行）"
+            switchNotice = event.text
+            loadingHistoryThreadID = threadID
+            Task {
+                await sendCommand(type: .listThreads)
+                await sendCommand(type: .loadThreadHistory, threadID: threadID)
+                loadingHistoryThreadID = nil
+            }
         }
         if event.title == "Codex 模型" {
             let names = event.text.split(separator: "\n").map { line in

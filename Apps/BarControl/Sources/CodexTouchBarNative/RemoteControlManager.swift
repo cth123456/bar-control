@@ -631,6 +631,35 @@ final class RemoteControlManager {
                     rememberThread(try await appServer.startTurn(command: executableCommand))
                 } catch {
                     guard executableCommand.threadID != nil else { throw error }
+                    // 桌面端 app-server 正持有该会话的写锁，任何第二个进程都无法续写同一 rollout。
+                    // 此时不重试原会话（重试只会反复失败+重启），改在新会话里继续，并通知手机。
+                    if error.localizedDescription.localizedCaseInsensitiveContains("active writer") {
+                        let fallback = RemoteCommand(
+                            id: executableCommand.id,
+                            createdAt: executableCommand.createdAt,
+                            sourceDeviceID: executableCommand.sourceDeviceID,
+                            type: .prompt,
+                            text: executableCommand.text,
+                            cwd: executableCommand.cwd,
+                            threadID: nil,
+                            providerID: nil,
+                            modelID: executableCommand.modelID,
+                            approvalRequestID: nil
+                        )
+                        let newThreadID = try await appServer.startTurn(command: fallback)
+                        rememberThread(newThreadID)
+                        _ = try await eventStore.append(
+                            sessionID: command.id.uuidString,
+                            kind: .actionProgress,
+                            title: "已切换新会话",
+                            text: "原会话正在桌面端运行，无法从手机续写；消息已在新会话中继续",
+                            threadID: newThreadID,
+                            metadata: ["originalThreadID": executableCommand.threadID ?? ""]
+                        )
+                        statusText = "已在新会话继续（原会话在桌面端运行）"
+                        notifyChange()
+                        break
+                    }
                     _ = try? await eventStore.append(
                         sessionID: command.id.uuidString,
                         kind: .warning,
