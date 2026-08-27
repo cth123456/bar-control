@@ -79,6 +79,6 @@ iPhone 客户端源码位于相邻目录 `../BarControlRemote`。Mac 与 iPhone 
 
 macOS 没有公开的 Touch Bar 面板亮度 API，但系统私有 `DFRBrightnessClient` 在当前机型上提供真实的 OLED 调光档位。App 默认把已点亮的 Touch Bar 保持在最亮档 1；每 5 秒仅在档位被系统改低时校正一次，不会在 Touch Bar 已关闭或整机休眠时唤醒它。可在“更多操作 → Touch Bar 保持最亮”随时关闭。
 
-## CC Switch
+## Codex++ 与供应商用量
 
-App 以只读方式访问 `~/.cc-switch/cc-switch.db`。为与 CC Switch 的“刷新用量”一致，它会在内存中使用供应商已有密钥执行同源 HTTPS 余额查询，但不会输出、复制、刷新或修改密钥及 CC Switch 配置。当前支持 CC Switch 自定义用量脚本及 DeepSeek 原生余额模板；结果只缓存余额、单位、时间与趋势样本。官方 Codex 账户只用当前已有 access token 查询额度，不刷新 token；非当前托管账户显示最后一次已采样额度。
+供应商切换由 Codex++ 管理，Bar Control 使用 `~/Library/Application Support/BarControl/provider-store.db` 保存迁移后的私有供应商与余额检测配置，不再依赖 CC Switch。余额检测只向供应商配置中的同源 HTTPS 端点发起请求，不输出或刷新密钥；当前支持自定义用量脚本及 DeepSeek 原生余额模板。官方 Codex 账户只用当前已有 access token 查询额度，不刷新 token；无法查询的供应商明确显示暂无数据。

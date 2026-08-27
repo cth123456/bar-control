@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only status bridge for Bar Control, Codex, and CC Switch."""
+"""Read-only status bridge for Bar Control, Codex, and configured providers."""
 
 from __future__ import annotations
 
@@ -23,11 +23,12 @@ from typing import Any
 
 
 CODEX_DIR = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
-CC_SWITCH_DB = Path.home() / ".cc-switch" / "cc-switch.db"
+PROVIDER_STORE_DIR = Path.home() / "Library" / "Application Support" / "BarControl"
+CC_SWITCH_DB = PROVIDER_STORE_DIR / "provider-store.db"
 CODEX_AUTH_FILE = CODEX_DIR / "auth.json"
-CC_SWITCH_CODEX_OAUTH_FILE = Path.home() / ".cc-switch" / "codex_oauth_auth.json"
+CC_SWITCH_CODEX_OAUTH_FILE = PROVIDER_STORE_DIR / "codex-oauth-accounts.json"
 APP_DIR = Path.home() / "Library" / "Application Support" / "CodexTouchBar"
-CC_SWITCH_USAGE_CACHE = APP_DIR / "cc-switch-usage-cache.json"
+CC_SWITCH_USAGE_CACHE = APP_DIR / "provider-usage-cache.json"
 CC_SWITCH_USAGE_CACHE_SECONDS = 30
 AI_ACCOUNT_USAGE_CACHE = APP_DIR / "ai-account-usage-cache.json"
 AI_ACCOUNT_USAGE_CACHE_SECONDS = 60

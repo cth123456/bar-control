@@ -1292,7 +1292,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         moreMenu.addItem(menuItem("打开随航", #selector(openSidecar)))
         moreMenu.addItem(menuItem("打开语音助手", #selector(openVoiceAssistant)))
         moreMenu.addItem(menuItem("远程 Codex 控制台…", #selector(showRemoteControl)))
-        moreMenu.addItem(menuItem("打开 CC Switch", #selector(openCCSwitch)))
+        moreMenu.addItem(menuItem("打开 Codex++ 管理工具", #selector(openCodexPlusPlusManager)))
         moreMenu.addItem(menuItem("打开当前 Codex 会话", #selector(openLatestCodexThread)))
         moreMenu.addItem(.separator())
         let runnerItem = NSMenuItem(title: "Touch Bar 动图", action: nil, keyEquivalent: "")
@@ -1760,8 +1760,8 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         }
     }
 
-    @objc private func openCCSwitch() {
-        openApplication(path: "/Applications/CC Switch.app")
+    @objc private func openCodexPlusPlusManager() {
+        openApplication(path: "/Applications/Codex++ 管理工具.app")
     }
 
     @objc private func togglePillBorders() {

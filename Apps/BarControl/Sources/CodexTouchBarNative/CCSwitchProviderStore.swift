@@ -16,12 +16,12 @@ enum CCSwitchError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .databaseUnavailable: return "无法读取 CC Switch 数据库"
+        case .databaseUnavailable: return "无法读取 Bar Control 供应商库"
         case .configUnavailable: return "无法读取 Codex config.toml"
         case .providerNotFound(let value): return "没有找到供应商：\(value)"
         case .activeProviderSectionMissing(let value): return "Codex 配置缺少当前供应商定义：\(value)"
         case .accessibilityPermissionRequired: return "需要在系统设置中允许 Bar Control 使用辅助功能"
-        case .appUnavailable: return "没有找到正在运行的 CC Switch"
+        case .appUnavailable: return "没有找到可用的供应商配置"
         case .enableButtonNotFound(let name): return "没有找到 \(name) 的启用按钮"
         case .pressFailed(let name): return "无法点击 \(name) 的启用按钮"
         case .verificationTimedOut(let name): return "CC Switch 未能确认已切换到 \(name)"
@@ -53,14 +53,19 @@ struct CCSwitchProviderStore: Sendable {
     }
 
     private let databaseURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".cc-switch/cc-switch.db")
+        .appendingPathComponent("Library/Application Support/BarControl/provider-store.db")
     private let settingsURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".cc-switch/settings.json")
+        .appendingPathComponent("Library/Application Support/BarControl/provider-settings.json")
+    private let codexPlusPlusSettingsURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".codex-session-delete/settings.json")
+    private let codexPlusPlusMappingURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/BarControl/codexpp-provider-map.json")
     private let configURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".codex/config.toml")
 
     func providers() async throws -> [RemoteProviderSummary] {
         let databasePath = databaseURL.path
+        let activeID = currentProviderIDFromCodexPlusPlus() ?? currentProviderIDFromLocalSettings()
         return try await Task.detached(priority: .utility) {
             guard FileManager.default.isReadableFile(atPath: databasePath) else {
                 throw CCSwitchError.databaseUnavailable
@@ -83,12 +88,12 @@ struct CCSwitchProviderStore: Sendable {
             }
             let data = output.fileHandleForReading.readDataToEndOfFile()
             let rows = try JSONDecoder().decode([Row].self, from: data)
-            return rows.map {
+            return rows.map { row in
                 RemoteProviderSummary(
-                    id: $0.id,
-                    name: $0.name,
-                    category: $0.category,
-                    isCurrent: $0.isCurrent != 0
+                    id: row.id,
+                    name: row.name,
+                    category: row.category,
+                    isCurrent: activeID.map { $0 == row.id } ?? (row.isCurrent != 0)
                 )
             }
         }.value
@@ -195,7 +200,7 @@ struct CCSwitchProviderStore: Sendable {
         currentProviderIDFromSettings()
     }
 
-    /// 读取指定供应商的模型目录（来自 CC Switch 数据库 modelCatalog），并标记当前使用中的模型。
+    /// 读取指定供应商的模型目录（来自 Bar Control 私有供应商库），并标记当前使用中的模型。
     func modelCatalog(providerID: String) -> [RemoteModelSummary] {
         let current = currentModelFromConfig()
         guard let settings = providerSettings(providerID: providerID) else { return [] }
@@ -210,7 +215,7 @@ struct CCSwitchProviderStore: Sendable {
         }
     }
 
-    /// 把指定模型写为 Codex 默认模型：更新 ~/.codex/config.toml + CC Switch 数据库该供应商的 config 行，避免被 CC Switch 恢复覆盖。
+    /// 把指定模型写为 Codex 默认模型，并同步 Bar Control 的供应商快照。
     func setCurrentModel(_ modelID: String, providerID: String) throws {
         guard var text = try? String(contentsOf: configURL, encoding: .utf8) else {
             throw CCSwitchError.configUnavailable
@@ -405,11 +410,21 @@ struct CCSwitchProviderStore: Sendable {
         if let auth = settings["auth"] as? [String: Any] {
             let authURL = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".codex/auth.json")
-            let data = try JSONSerialization.data(withJSONObject: auth, options: [.sortedKeys])
+            let existingData = try? Data(contentsOf: authURL)
+            let existing = existingData.flatMap {
+                try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+            } ?? [:]
+            var merged = existing
+            for (key, value) in auth where !(value is NSNull) {
+                if let string = value as? String, string.isEmpty { continue }
+                merged[key] = value
+            }
+            let data = try JSONSerialization.data(withJSONObject: merged, options: [.sortedKeys])
             try data.write(to: authURL, options: .atomic)
         }
 
         try updateCurrentProviderCodex(provider.id)
+        try updateCodexPlusPlusActiveProvider(provider.id)
         try? writeCatalogFile(settings: settings)
         _ = try reconcileCodexConfiguration(provider: provider)
     }
@@ -656,31 +671,16 @@ struct CCSwitchProviderStore: Sendable {
     @MainActor
     func switchProvider(_ provider: RemoteProviderSummary) async throws -> RemoteProviderSummary {
         if provider.isCurrent { return provider }
-        try backupSwitchState()
-
-        let promptKey = "AXTrustedCheckOptionPrompt"
-        guard AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary) else {
-            throw CCSwitchError.accessibilityPermissionRequired
-        }
-        guard let application = NSRunningApplication.runningApplications(
-            withBundleIdentifier: "com.ccswitch.desktop"
-        ).first else {
-            _ = try await NSWorkspace.shared.openApplication(
-                at: URL(fileURLWithPath: "/Applications/CC Switch.app"),
-                configuration: NSWorkspace.OpenConfiguration()
-            )
-            try await Task.sleep(for: .seconds(1))
-            guard let launched = NSRunningApplication.runningApplications(
-                withBundleIdentifier: "com.ccswitch.desktop"
-            ).first else { throw CCSwitchError.appUnavailable }
-            return try await switchUsingAccessibility(provider, application: launched, hideAfter: true)
-        }
-
-        let hideAfter = !application.isActive
-        return try await switchUsingAccessibility(provider, application: application, hideAfter: hideAfter)
+        try activateProviderDirect(provider)
+        return RemoteProviderSummary(
+            id: provider.id,
+            name: provider.name,
+            category: provider.category,
+            isCurrent: true
+        )
     }
 
-    private func currentProviderIDFromSettings() -> String? {
+    private func currentProviderIDFromLocalSettings() -> String? {
         guard
             let data = try? Data(contentsOf: settingsURL),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -688,108 +688,36 @@ struct CCSwitchProviderStore: Sendable {
         return object["currentProviderCodex"] as? String
     }
 
-    @MainActor
-    private func switchUsingAccessibility(
-        _ provider: RemoteProviderSummary,
-        application: NSRunningApplication,
-        hideAfter: Bool
-    ) async throws -> RemoteProviderSummary {
-        application.activate(options: [.activateAllWindows])
-        try await Task.sleep(for: .milliseconds(400))
-        await ensureWindowVisible(application: application)
-        defer {
-            if hideAfter { application.hide() }
-        }
-
-        let appElement = AXUIElementCreateApplication(application.processIdentifier)
-        let elements = flattenedElements(appElement)
-        let normalizedName = Self.normalized(provider.name)
-
-        guard let nameIndex = elements.firstIndex(where: { element in
-            Self.normalized(elementLabel(element.element)) == normalizedName
-                && axString(element.element, kAXRoleAttribute) != kAXButtonRole
-        }) else {
-            throw CCSwitchError.enableButtonNotFound(provider.name)
-        }
-
-        var enableButton: AXUIElement?
-        for element in elements[(nameIndex + 1)...] {
-            let role = axString(element.element, kAXRoleAttribute) ?? ""
-            let label = elementLabel(element.element)
-            if role == kAXHeadingRole, Self.normalized(label) != normalizedName {
-                break
-            }
-            if role == kAXButtonRole, label == "启用" || label == "使用中" {
-                enableButton = element.element
-                break
-            }
-        }
-
-        guard let enableButton else {
-            throw CCSwitchError.enableButtonNotFound(provider.name)
-        }
-        let buttonTitle = axString(enableButton, kAXTitleAttribute)
-            ?? axString(enableButton, kAXDescriptionAttribute)
-            ?? ""
-        if buttonTitle != "使用中" {
-            guard AXUIElementPerformAction(enableButton, kAXPressAction as CFString) == .success else {
-                throw CCSwitchError.pressFailed(provider.name)
-            }
-        }
-
-        for _ in 0..<30 {
-            try await Task.sleep(for: .milliseconds(350))
-            let current = try await providers().first(where: \.isCurrent)
-            if current?.id == provider.id, currentProviderIDFromSettings() == provider.id {
-                return current ?? provider
-            }
-        }
-        throw CCSwitchError.verificationTimedOut(provider.name)
+    private func codexPlusPlusProviderMapping() -> [String: String] {
+        guard
+            let data = try? Data(contentsOf: codexPlusPlusMappingURL),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: String]
+        else { return [:] }
+        return object
     }
 
-    /// 托盘应用用 NSRunningApplication 激活不一定能显示主窗口，AX 拿不到 WINDOWS；
-    /// 这时用 LaunchServices 的 `open -a` 强制把窗口拉起来，再做辅助功能扫描。
-    @MainActor
-    private func ensureWindowVisible(application: NSRunningApplication) async {
-        if Self.hasAXWindow(application.processIdentifier) { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-a", "CC Switch"]
-        try? process.run()
-        try? await Task.sleep(for: .milliseconds(800))
-        application.activate(options: [.activateAllWindows])
-        try? await Task.sleep(for: .milliseconds(400))
+    private func currentProviderIDFromCodexPlusPlus() -> String? {
+        guard
+            let data = try? Data(contentsOf: codexPlusPlusSettingsURL),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let active = object["activeRelayId"] as? String
+        else { return nil }
+        return codexPlusPlusProviderMapping().first(where: { $0.value == active })?.key
     }
 
-    private static func hasAXWindow(_ pid: pid_t) -> Bool {
-        let root = AXUIElementCreateApplication(pid)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(root, kAXWindowsAttribute as CFString, &value) == .success else {
-            return false
-        }
-        return ((value as? [AXUIElement])?.isEmpty == false)
+    private func currentProviderIDFromSettings() -> String? {
+        currentProviderIDFromCodexPlusPlus() ?? currentProviderIDFromLocalSettings()
     }
 
-    private func flattenedElements(_ root: AXUIElement) -> [(element: AXUIElement, index: Int)] {
-        var result: [(AXUIElement, Int)] = []
-        var stack = [root]
-        var index = 0
-        while let current = stack.popLast(), index < 3_000 {
-            result.append((current, index))
-            index += 1
-            let children = axElements(current, kAXChildrenAttribute)
-            for child in children.reversed() {
-                stack.append(child)
-            }
-        }
-        return result
-    }
-
-    private func elementLabel(_ element: AXUIElement) -> String {
-        axString(element, kAXTitleAttribute)
-            ?? axString(element, kAXDescriptionAttribute)
-            ?? axString(element, kAXValueAttribute)
-            ?? ""
+    private func updateCodexPlusPlusActiveProvider(_ providerID: String) throws {
+        guard
+            let data = try? Data(contentsOf: codexPlusPlusSettingsURL),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        object["activeRelayId"] = codexPlusPlusProviderMapping()[providerID] ?? providerID
+        object["relayProfilesEnabled"] = true
+        let updated = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        try updated.write(to: codexPlusPlusSettingsURL, options: .atomic)
     }
 
     private func backupSwitchState() throws {
@@ -810,45 +738,6 @@ struct CCSwitchProviderStore: Sendable {
         for source in candidates where manager.fileExists(atPath: source.path) {
             try manager.copyItem(at: source, to: directory.appendingPathComponent(source.lastPathComponent))
         }
-    }
-
-    private func findElement(
-        in root: AXUIElement,
-        maxDepth: Int,
-        matching predicate: (AXUIElement) -> Bool
-    ) -> AXUIElement? {
-        if predicate(root) { return root }
-        guard maxDepth > 0 else { return nil }
-        for child in axElements(root, kAXChildrenAttribute) {
-            if let found = findElement(in: child, maxDepth: maxDepth - 1, matching: predicate) {
-                return found
-            }
-        }
-        return nil
-    }
-
-    private func axString(_ element: AXUIElement, _ attribute: String) -> String? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
-            return nil
-        }
-        return value as? String
-    }
-
-    private func axElement(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
-            return nil
-        }
-        return (value as! AXUIElement?)
-    }
-
-    private func axElements(_ element: AXUIElement, _ attribute: String) -> [AXUIElement] {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
-            return []
-        }
-        return value as? [AXUIElement] ?? []
     }
 
     private static func normalized(_ value: String) -> String {

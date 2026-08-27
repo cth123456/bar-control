@@ -245,13 +245,7 @@ final class RemoteControlManager {
     }
 
     private static func currentProviderIDFromSettings() -> String? {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cc-switch/settings.json")
-        guard
-            let data = try? Data(contentsOf: url),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        return object["currentProviderCodex"] as? String
+        CCSwitchProviderStore().currentProviderID()
     }
 
     func showWindow() {
