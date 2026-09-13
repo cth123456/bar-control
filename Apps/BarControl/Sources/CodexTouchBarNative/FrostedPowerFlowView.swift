@@ -50,6 +50,10 @@ final class PowerFlowPanelView: NSView {
         static let primaryChipBottom: CGFloat = 57
         static let temperatureChipBottom: CGFloat = 27
         static let captionBottom: CGFloat = 5
+        /// Two information rows (charger/cable summary and the underpowered
+        /// warning) live above the policy selector and only claim space when
+        /// they actually have something to say.
+        static let infoRowHeight: CGFloat = 17
     }
 
     let flowView = FrostedPowerFlowView()
@@ -73,6 +77,9 @@ final class PowerFlowPanelView: NSView {
     private let sourceLabel = NSTextField(labelWithString: "")
     private let negotiationLabel = NSTextField(labelWithString: "USB-C 自动协商")
     private let policyLabel = NSTextField(labelWithString: "供电偏好")
+    private let warningLabel = NSTextField(labelWithString: "")
+    private let chargerSummaryLabel = NSTextField(labelWithString: "")
+    private let cableSummaryLabel = NSTextField(labelWithString: "")
     private lazy var policyControl = PowerPolicySelector(
         titles: PowerFlowPolicy.allCases.map(\.title),
         selectedIndex: powerFlowPolicy.rawValue
@@ -93,6 +100,15 @@ final class PowerFlowPanelView: NSView {
     var metrics = SystemMetrics.unavailable {
         didSet {
             flowView.metrics = metrics
+            updateSummary()
+            updateLayoutSize()
+        }
+    }
+
+    /// Charger / cable details for the two informational rows. Kept separate
+    /// from `metrics` because they change far less often.
+    var interfaceSpecs = InterfaceSpecs.empty {
+        didSet {
             updateSummary()
             updateLayoutSize()
         }
@@ -121,6 +137,22 @@ final class PowerFlowPanelView: NSView {
         policyLabel.lineBreakMode = .byTruncatingTail
         policyLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        warningLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        warningLabel.textColor = .systemOrange
+        warningLabel.lineBreakMode = .byTruncatingTail
+        warningLabel.isHidden = true
+
+        chargerSummaryLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        chargerSummaryLabel.textColor = .secondaryLabelColor
+        chargerSummaryLabel.lineBreakMode = .byTruncatingTail
+        chargerSummaryLabel.isHidden = true
+
+        cableSummaryLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        cableSummaryLabel.textColor = .secondaryLabelColor
+        cableSummaryLabel.alignment = .right
+        cableSummaryLabel.lineBreakMode = .byTruncatingTail
+        cableSummaryLabel.isHidden = true
+
         policyControl.setAccessibilityLabel("Mac 供电策略")
         policyControl.setAccessibilityHelp(
             "选择 Mac 端供电策略；「优先充电」放开系统充电上限，「负载均衡/优先放电」把系统充电上限压到 80% 让外接设备优先取电"
@@ -139,6 +171,9 @@ final class PowerFlowPanelView: NSView {
         addSubview(negotiationLabel)
         addSubview(policyLabel)
         addSubview(policyControl)
+        addSubview(warningLabel)
+        addSubview(chargerSummaryLabel)
+        addSubview(cableSummaryLabel)
         updateSummary()
         updateLayoutSize()
 
@@ -153,21 +188,67 @@ final class PowerFlowPanelView: NSView {
 
     override var isOpaque: Bool { false }
 
+    /// Extra rows sit between the chips and the policy selector, so the
+    /// footer (and therefore the whole panel) grows only when they are used.
+    private var infoRowCount: Int {
+        var count = 0
+        if !warningLabel.isHidden { count += 1 }
+        if !chargerSummaryLabel.isHidden || !cableSummaryLabel.isHidden { count += 1 }
+        return count
+    }
+
+    private var effectiveFooterHeight: CGFloat {
+        Layout.footerHeight + CGFloat(infoRowCount) * Layout.infoRowHeight
+    }
+
     override var intrinsicContentSize: NSSize {
         NSSize(
             width: flowView.intrinsicContentSize.width,
-            height: flowView.intrinsicContentSize.height + Layout.footerHeight
+            height: flowView.intrinsicContentSize.height + effectiveFooterHeight
         )
     }
 
     override func layout() {
         super.layout()
+        let footer = effectiveFooterHeight
         flowView.frame = NSRect(
             x: 0,
-            y: Layout.footerHeight,
+            y: footer,
             width: bounds.width,
-            height: max(0, bounds.height - Layout.footerHeight)
+            height: max(0, bounds.height - footer)
         )
+        // Extra rows stack upward from the original footer top, so the
+        // existing rows keep their exact positions at the bottom.
+        var extraRowTop = Layout.footerHeight
+        func takeRow() -> CGFloat {
+            extraRowTop += Layout.infoRowHeight
+            return extraRowTop - Layout.infoRowHeight + 1
+        }
+        if !warningLabel.isHidden {
+            warningLabel.frame = NSRect(
+                x: Layout.horizontalInset + 3,
+                y: takeRow(),
+                width: max(0, bounds.width - Layout.horizontalInset * 2 - 6),
+                height: 15
+            )
+        }
+        if !(chargerSummaryLabel.isHidden && cableSummaryLabel.isHidden) {
+            let rowY = takeRow()
+            let hasCable = !cableSummaryLabel.isHidden
+            let halfWidth = (bounds.width - Layout.horizontalInset * 2 - 6) / 2
+            chargerSummaryLabel.frame = NSRect(
+                x: Layout.horizontalInset + 3,
+                y: rowY,
+                width: hasCable ? halfWidth : bounds.width - Layout.horizontalInset * 2 - 6,
+                height: 15
+            )
+            cableSummaryLabel.frame = NSRect(
+                x: Layout.horizontalInset + 3 + halfWidth,
+                y: rowY,
+                width: halfWidth,
+                height: 15
+            )
+        }
         let availableWidth = bounds.width - Layout.horizontalInset * 2 - Layout.chipGap * 2
         let chipWidth = floor(availableWidth / 3)
         localChip.frame = NSRect(
@@ -273,7 +354,16 @@ final class PowerFlowPanelView: NSView {
             ? "放电中"
             : ChargingLimitController.shared.summaryText)
         negotiationLabel.stringValue = powerPolicySummary
-        setAccessibilityValue("本机实际 \(localChip.value)，外接设备 \(externalChip.value)，风扇\(fanSummary.accessibility)，电池温度 \(batteryTemperatureChip.value)，GPU 温度 \(gpuTemperatureChip.value)，\(sourceDescription)，Mac 电量 \(batteryPercentText(metrics.batteryPercent))，外接设备电量 \(batteryPercentText(metrics.externalBatteryPercent))，策略 \(powerFlowPolicy.title)，当前 \(resolvedPowerFlowPolicy.title)，\(ChargingLimitController.shared.accessibilityText)")
+        updateInterfaceRows()
+        setAccessibilityValue("本机实际 \(localChip.value)，外接设备 \(externalChip.value)，风扇\(fanSummary.accessibility)，电池温度 \(batteryTemperatureChip.value)，GPU 温度 \(gpuTemperatureChip.value)，\(sourceDescription)，Mac 电量 \(batteryPercentText(metrics.batteryPercent))，外接设备电量 \(batteryPercentText(metrics.externalBatteryPercent))，策略 \(powerFlowPolicy.title)，当前 \(resolvedPowerFlowPolicy.title)，\(ChargingLimitController.shared.accessibilityText)" + interfaceAccessibilitySuffix())
+    }
+
+    private func interfaceAccessibilitySuffix() -> String {
+        var parts: [String] = []
+        if !warningLabel.isHidden { parts.append(warningLabel.stringValue) }
+        if !chargerSummaryLabel.isHidden { parts.append(chargerSummaryLabel.stringValue) }
+        if !cableSummaryLabel.isHidden { parts.append(cableSummaryLabel.stringValue) }
+        return parts.isEmpty ? "" : "，" + parts.joined(separator: "，")
     }
 
     private func handlePolicySelection(_ index: Int) {
@@ -305,6 +395,42 @@ final class PowerFlowPanelView: NSView {
             userInitiated: true
         )
         AdapterDischargeController.shared.handlePolicySelection(powerFlowPolicy)
+    }
+
+    /// Fills the two informational rows. Both are informational only: the
+    /// full specifications live in the 接口与线缆详情 window.
+    private func updateInterfaceRows() {
+        if PowerDiagnosis.isUnderpowered(metrics),
+           let input = metrics.inputWatts,
+           let load = metrics.systemWatts ?? metrics.sourceWatts {
+            let verdict = PowerDiagnosis.verdict(specs: interfaceSpecs, metrics: metrics)
+            warningLabel.stringValue = String(
+                format: "⚠︎ %@：输入 %.1f W < 整机 %.1f W，电池在放电",
+                verdict.title,
+                input,
+                load
+            )
+            warningLabel.isHidden = false
+        } else {
+            warningLabel.stringValue = ""
+            warningLabel.isHidden = true
+        }
+
+        if let charger = interfaceSpecs.charger {
+            chargerSummaryLabel.stringValue = "充电器 " + charger.summary
+            chargerSummaryLabel.isHidden = false
+        } else {
+            chargerSummaryLabel.stringValue = ""
+            chargerSummaryLabel.isHidden = true
+        }
+
+        if let cable = interfaceSpecs.primaryCablePort?.cableSummary {
+            cableSummaryLabel.stringValue = "线缆 " + cable
+            cableSummaryLabel.isHidden = false
+        } else {
+            cableSummaryLabel.stringValue = ""
+            cableSummaryLabel.isHidden = true
+        }
     }
 
     private var powerPolicySummary: String {

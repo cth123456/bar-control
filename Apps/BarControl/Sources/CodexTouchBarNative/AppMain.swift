@@ -472,6 +472,9 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     private var localModelStatus = LocalModelStatus.idle
     private var localModelFrame = 0
     private var systemMetrics = SystemMetrics.unavailable
+    /// Charger and cable specifications, refreshed on the same 1 s cadence
+    /// but changing far less often (only on plug/unplug).
+    private var interfaceSpecs = InterfaceSpecs.empty
     private var smokeRetainedView: NSView?
     private var smokeRetainedWindow: NSWindow?
     private let sidecarStateURL = FileManager.default.homeDirectoryForCurrentUser
@@ -1379,6 +1382,55 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         }
     }
 
+    /// Headless renders for the charger/cable rows and the detail page, in
+    /// both appearances, using live hardware when available and the bundled
+    /// fixture otherwise.
+    func runInterfaceSpecsPreviews() {
+        let useFixture = CommandLine.arguments.contains("--interface-specs-fixture")
+        let liveSpecs = InterfaceSpecsReader.read()
+        let specs = (useFixture || !liveSpecs.hasPanelContent) ? .preview : liveSpecs
+        let liveMetrics = SystemMetricsReader.read()
+        let metrics = (useFixture || !liveMetrics.externalPower)
+            ? SystemMetrics.previewUnderpowered
+            : liveMetrics
+        AppLog.write(
+            "interface-specs preview useFixture=\(useFixture) charger=\(specs.charger?.summary ?? "nil") ports=\(specs.ports.count) underpowered=\(PowerDiagnosis.isUnderpowered(metrics))"
+        )
+        for (name, appearance) in [
+            ("interface-panel-light", NSAppearance(named: .aqua)),
+            ("interface-panel-dark", NSAppearance(named: .darkAqua)),
+        ] {
+            let panel = PowerFlowPanelView()
+            panel.appearance = appearance
+            panel.metrics = metrics
+            panel.interfaceSpecs = specs
+            renderPreview(panel, name: name)
+        }
+        for (name, appearance) in [
+            ("interface-detail-light", NSAppearance(named: .aqua)),
+            ("interface-detail-dark", NSAppearance(named: .darkAqua)),
+        ] {
+            let view = InterfaceDetailContent.makeView(specs: specs, metrics: metrics)
+            view.appearance = appearance
+            let container = NSView(frame: NSRect(origin: .zero, size: NSSize(width: 524, height: 760)))
+            container.appearance = appearance
+            container.wantsLayer = true
+            container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            view.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                view.topAnchor.constraint(equalTo: container.topAnchor),
+            ])
+            container.layoutSubtreeIfNeeded()
+            renderPreview(container, name: name)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NSApp.terminate(nil)
+        }
+    }
+
     private func renderPreview(_ view: NSView, name: String) {
         guard let representation = renderedBitmap(for: view) else {
             AppLog.write("preview \(name) failed: bitmap")
@@ -1806,6 +1858,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         let settingsMenu = NSMenu(title: "Touch Bar 设置")
         settingsMenu.addItem(menuItem("显示主 Touch Bar", #selector(showMain)))
         settingsMenu.addItem(menuItem("自定义 Touch Bar 组件…", #selector(showComponentOrder)))
+        settingsMenu.addItem(menuItem("接口与线缆详情…", #selector(showInterfaceDetails)))
         let persistentItem = menuItem("在触控栏常驻显示模块", #selector(togglePersistentModules))
         persistentMenuItem = persistentItem
         settingsMenu.addItem(persistentItem)
@@ -1883,7 +1936,9 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         let started = CACurrentMediaTime()
         let fresh = SystemMetricsReader.read()
         systemMetrics = fresh
+        interfaceSpecs = InterfaceSpecsReader.read()
         powerFlowView?.metrics = fresh
+        powerFlowView?.interfaceSpecs = interfaceSpecs
         systemDetailView?.metrics = fresh
         lastPanelMetricsAt = Date()
         let duration = (CACurrentMediaTime() - started) * 1_000
@@ -1959,12 +2014,18 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
             let next = await SystemMetricsReader.fetch()
             guard let self else { return }
             systemMetrics = next
+            interfaceSpecs = InterfaceSpecsReader.read()
             isMetricsRefreshing = false
             metricsFetchStartedAt = nil
             lastPanelMetricsAt = Date()
             updateSystemMonitor()
             powerFlowView?.metrics = next
+            powerFlowView?.interfaceSpecs = interfaceSpecs
             systemDetailView?.metrics = next
+            InterfaceDetailWindowController.shared.updateIfVisible(
+                specs: interfaceSpecs,
+                metrics: next
+            )
             // Auto rules only run after the panel has claimed the limit, so
             // an externally configured limit is never overwritten silently.
             ChargingLimitController.shared.update(
@@ -2502,6 +2563,14 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         updateBrightnessMenuItem()
         maintainTouchBarBrightness()
         AppLog.write("keep Touch Bar maximum brightness=\(keepTouchBarMaximumBrightness)")
+    }
+
+    @objc private func showInterfaceDetails() {
+        interfaceSpecs = InterfaceSpecsReader.read()
+        InterfaceDetailWindowController.shared.show(
+            specs: interfaceSpecs,
+            metrics: systemMetrics
+        )
     }
 
     /// One system authorization prompt installs the privileged helper used by
@@ -3174,6 +3243,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.runChargingLimitProbe()
         } else if CommandLine.arguments.contains("--menu-open-probe") {
             controller.runMenuOpenProbe()
+        } else if CommandLine.arguments.contains("--interface-specs-previews") {
+            controller.runInterfaceSpecsPreviews()
         } else if CommandLine.arguments.contains("--install-power-helper") {
             controller.runInstallPowerHelperProbe()
         } else if CommandLine.arguments.contains("--style-previews") {
