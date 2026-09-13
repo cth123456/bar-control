@@ -462,6 +462,8 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     private let universalControlWatchdog = UniversalControlWatchdog()
     private var isRefreshing = false
     private var isMetricsRefreshing = false
+    private var metricsFetchStartedAt: Date?
+    private var lastPanelMetricsAt: Date?
     private var didCreateVisibleItem = false
     private var lastLoggedStatus = ""
     private var lastLoggedMetrics = ""
@@ -1322,6 +1324,61 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         }
     }
 
+    /// Headless entry for the same install path the settings menu uses.
+    func runInstallPowerHelperProbe() {
+        Task {
+            let controller = AdapterDischargeController.shared
+            let ok = await controller.installHelper()
+            AppLog.write(
+                "install-helper probe ok=\(ok) installed=\(controller.helperInstalled) lastError=\(controller.lastError ?? "nil")"
+            )
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// Headless check for the "first menu open shows an empty flow graph"
+    /// regression. It forces the exact cold state the user hit (panel owns
+    /// `SystemMetrics.unavailable`), then runs the same `menuWillOpen` path a
+    /// real menu open takes, and renders the panel before/after so the fix
+    /// can be judged from pixels instead of a real click.
+    func runMenuOpenProbe() {
+        let argumentIndex = CommandLine.arguments.firstIndex(of: "--menu-open-probe")
+        let delay: Double = {
+            guard let argumentIndex,
+                  CommandLine.arguments.indices.contains(argumentIndex + 1),
+                  let value = Double(CommandLine.arguments[argumentIndex + 1]) else {
+                return 3
+            }
+            return value
+        }()
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, let menu = self.statusItem.menu else { return }
+            // Force the cold state: the panel exists but no metrics ever
+            // landed in it, which is what an immediate first menu open sees.
+            self.lastPanelMetricsAt = nil
+            self.systemMetrics = .unavailable
+            self.powerFlowView?.metrics = .unavailable
+            let coldWatts = self.powerFlowView?.metrics.systemWatts
+                .map { String(format: "%.2f", $0) } ?? "nil"
+            if let panel = self.powerFlowView {
+                self.renderPreview(panel, name: "menu-open-probe-cold")
+            }
+            let started = CACurrentMediaTime()
+            self.menuWillOpen(menu)
+            let syncMilliseconds = (CACurrentMediaTime() - started) * 1_000
+            let after = self.powerFlowView?.metrics
+            let afterWatts = after?.systemWatts.map { String(format: "%.2f", $0) } ?? "nil"
+            AppLog.write(
+                "menu-open-probe coldWatts=\(coldWatts) afterWatts=\(afterWatts) external=\(after?.externalPower ?? false) syncMs=\(String(format: "%.1f", syncMilliseconds))"
+            )
+            if let panel = self.powerFlowView {
+                self.renderPreview(panel, name: "menu-open-probe-after")
+            }
+            self.menuDidClose(menu)
+            NSApp.terminate(nil)
+        }
+    }
+
     private func renderPreview(_ view: NSView, name: String) {
         guard let representation = renderedBitmap(for: view) else {
             AppLog.write("preview \(name) failed: bitmap")
@@ -1755,6 +1812,11 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         let brightnessItem = menuItem("Touch Bar 保持最亮", #selector(toggleTouchBarMaximumBrightness))
         brightnessMenuItem = brightnessItem
         settingsMenu.addItem(brightnessItem)
+        if !AdapterDischargeController.shared.helperInstalled {
+            settingsMenu.addItem(
+                menuItem("安装放电辅助组件（优先放电）…", #selector(installDischargeHelper))
+            )
+        }
         settingsItem.submenu = settingsMenu
         menu.addItem(settingsItem)
 
@@ -1814,6 +1876,20 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
 
     func menuWillOpen(_ menu: NSMenu) {
         if menu === aiDisplayMenu { aiDisplayMenuOpen = true }
+        // Menu views draw synchronously the moment the menu opens, before any
+        // async refresh can land. Read once right here so the first open
+        // (and any open after sleep/wake) always shows real data instead of
+        // an empty flow graph.
+        let started = CACurrentMediaTime()
+        let fresh = SystemMetricsReader.read()
+        systemMetrics = fresh
+        powerFlowView?.metrics = fresh
+        systemDetailView?.metrics = fresh
+        lastPanelMetricsAt = Date()
+        let duration = (CACurrentMediaTime() - started) * 1_000
+        AppLog.write(
+            "menu open sync metrics\(String(format: " %.1fms", duration)) systemWatts=\(fresh.systemWatts.map { String(format: "%.2f", $0) } ?? "nil") battery=\(fresh.batteryWatts.map { String(format: "%.2f", $0) } ?? "nil")"
+        )
         refreshSystemMetrics()
         powerFlowView?.startAnimating()
         AppLog.write("power flow animation=start")
@@ -1867,13 +1943,25 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     }
 
     private func refreshSystemMetrics() {
-        guard !isMetricsRefreshing else { return }
+        if isMetricsRefreshing {
+            // An IORegistry read can stall (notably right after wake). Without
+            // this watchdog the 1s timer would silently stop updating the
+            // panel forever.
+            if let startedAt = metricsFetchStartedAt,
+               Date().timeIntervalSince(startedAt) < 8 {
+                return
+            }
+            AppLog.write("metrics refresh watchdog: previous fetch exceeded 8s")
+        }
         isMetricsRefreshing = true
+        metricsFetchStartedAt = Date()
         Task { [weak self] in
             let next = await SystemMetricsReader.fetch()
             guard let self else { return }
             systemMetrics = next
             isMetricsRefreshing = false
+            metricsFetchStartedAt = nil
+            lastPanelMetricsAt = Date()
             updateSystemMonitor()
             powerFlowView?.metrics = next
             systemDetailView?.metrics = next
@@ -2414,6 +2502,30 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         updateBrightnessMenuItem()
         maintainTouchBarBrightness()
         AppLog.write("keep Touch Bar maximum brightness=\(keepTouchBarMaximumBrightness)")
+    }
+
+    /// One system authorization prompt installs the privileged helper used by
+    /// the 优先放电 policy; a successful install removes this menu item on the
+    /// next menu rebuild.
+    @objc private func installDischargeHelper() {
+        Task { @MainActor in
+            let controller = AdapterDischargeController.shared
+            let ok = await controller.installHelper()
+            let alert = NSAlert()
+            if ok {
+                alert.messageText = "放电辅助组件已安装"
+                alert.informativeText = controller.lastError
+                    ?? "现在选择「优先放电」会断开充电器，切回其他策略或退出 App 时自动恢复。"
+                alert.alertStyle = .informational
+                rebuildMenu()
+            } else {
+                alert.messageText = "放电辅助组件未安装"
+                alert.informativeText = controller.lastError ?? "已取消。"
+                alert.alertStyle = .warning
+            }
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+        }
     }
 
     @objc private func selectPowerRunnerStyle(_ sender: NSMenuItem) {
@@ -3060,6 +3172,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.runLivePowerTelemetryProbe()
         } else if CommandLine.arguments.contains("--charging-limit-probe") {
             controller.runChargingLimitProbe()
+        } else if CommandLine.arguments.contains("--menu-open-probe") {
+            controller.runMenuOpenProbe()
+        } else if CommandLine.arguments.contains("--install-power-helper") {
+            controller.runInstallPowerHelperProbe()
         } else if CommandLine.arguments.contains("--style-previews") {
             controller.runStylePreviews()
         } else if CommandLine.arguments.contains("--render-main") {

@@ -73,13 +73,10 @@ final class PowerFlowPanelView: NSView {
     private let sourceLabel = NSTextField(labelWithString: "")
     private let negotiationLabel = NSTextField(labelWithString: "USB-C 自动协商")
     private let policyLabel = NSTextField(labelWithString: "供电偏好")
-    private let policyControl = NSSegmentedControl(
-        labels: PowerFlowPolicy.allCases.map(\.title),
-        trackingMode: .selectOne,
-        target: nil,
-        action: nil
+    private lazy var policyControl = PowerPolicySelector(
+        titles: PowerFlowPolicy.allCases.map(\.title),
+        selectedIndex: powerFlowPolicy.rawValue
     )
-    private let policyGlassView: NSView
 
     private var powerFlowPolicy: PowerFlowPolicy {
         get { PowerFlowPolicyStore.current }
@@ -104,26 +101,6 @@ final class PowerFlowPanelView: NSView {
     var isAnimating: Bool { flowView.isAnimating }
 
     init() {
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.style = .regular
-            glass.cornerRadius = 10
-            if #available(macOS 27.0, *) {
-                glass.effectIsInteractive = true
-            }
-            glass.contentView = policyControl
-            policyGlassView = glass
-        } else {
-            let fallback = NSVisualEffectView()
-            fallback.material = .popover
-            fallback.blendingMode = .withinWindow
-            fallback.state = .active
-            fallback.wantsLayer = true
-            fallback.layer?.cornerRadius = 10
-            fallback.layer?.cornerCurve = .continuous
-            fallback.addSubview(policyControl)
-            policyGlassView = fallback
-        }
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -144,15 +121,13 @@ final class PowerFlowPanelView: NSView {
         policyLabel.lineBreakMode = .byTruncatingTail
         policyLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        policyControl.segmentStyle = .rounded
-        policyControl.controlSize = .small
-        policyControl.selectedSegment = powerFlowPolicy.rawValue
-        policyControl.target = self
-        policyControl.action = #selector(powerFlowPolicyChanged(_:))
         policyControl.setAccessibilityLabel("Mac 供电策略")
         policyControl.setAccessibilityHelp(
             "选择 Mac 端供电策略；「优先充电」放开系统充电上限，「负载均衡/优先放电」把系统充电上限压到 80% 让外接设备优先取电"
         )
+        policyControl.onSelect = { [weak self] index in
+            self?.handlePolicySelection(index)
+        }
 
         addSubview(flowView)
         addSubview(localChip)
@@ -163,7 +138,7 @@ final class PowerFlowPanelView: NSView {
         addSubview(sourceLabel)
         addSubview(negotiationLabel)
         addSubview(policyLabel)
-        addSubview(policyGlassView)
+        addSubview(policyControl)
         updateSummary()
         updateLayoutSize()
 
@@ -246,14 +221,12 @@ final class PowerFlowPanelView: NSView {
             width: 116,
             height: 16
         )
-        policyGlassView.frame = NSRect(
+        policyControl.frame = NSRect(
             x: policyLabel.frame.maxX + 8,
             y: Layout.policyBottom,
             width: max(0, bounds.width - policyLabel.frame.maxX - Layout.horizontalInset - 8),
             height: Layout.chipHeight
         )
-        policyControl.frame = policyGlassView.bounds.insetBy(dx: 2, dy: 1)
-        policyControl.autoresizingMask = [.width, .height]
     }
 
     func startAnimating() {
@@ -282,6 +255,7 @@ final class PowerFlowPanelView: NSView {
     }
 
     private func updateSummary() {
+        policyControl.setSelectedIndex(powerFlowPolicy.rawValue)
         localChip.title = "本机实际"
         localChip.value = Self.watts(metrics.localComputerWatts)
         externalChip.title = "外接设备"
@@ -302,11 +276,23 @@ final class PowerFlowPanelView: NSView {
         setAccessibilityValue("本机实际 \(localChip.value)，外接设备 \(externalChip.value)，风扇\(fanSummary.accessibility)，电池温度 \(batteryTemperatureChip.value)，GPU 温度 \(gpuTemperatureChip.value)，\(sourceDescription)，Mac 电量 \(batteryPercentText(metrics.batteryPercent))，外接设备电量 \(batteryPercentText(metrics.externalBatteryPercent))，策略 \(powerFlowPolicy.title)，当前 \(resolvedPowerFlowPolicy.title)，\(ChargingLimitController.shared.accessibilityText)")
     }
 
-    @objc private func powerFlowPolicyChanged(_ sender: NSSegmentedControl) {
-        guard let selection = PowerFlowPolicy(rawValue: sender.selectedSegment) else { return }
+    private func handlePolicySelection(_ index: Int) {
+        guard let selection = PowerFlowPolicy(rawValue: index) else { return }
         powerFlowPolicy = selection
         applySelectedPolicy()
         updateSummary()
+        // Picking 优先放电 without the helper is the exact moment the user
+        // expects it to work, so offer the one-time install right away. The
+        // system prompt is cancellable and nothing changes if dismissed.
+        if selection == .discharging, !AdapterDischargeController.shared.helperInstalled {
+            Task { @MainActor [weak self] in
+                let installed = await AdapterDischargeController.shared.installHelper()
+                if installed {
+                    AdapterDischargeController.shared.handlePolicySelection(.discharging)
+                }
+                self?.updateSummary()
+            }
+        }
     }
 
     /// Applies the current selection to the system levers. The panel is the
@@ -396,9 +382,120 @@ final class PowerFlowPanelView: NSView {
     }
 }
 
+/// Three-state power policy selector. A stock NSSegmentedControl always draws
+/// a group tray around all segments, which reads as a second border next to
+/// the selected pill; this control draws only the selected segment's pill and
+/// keeps hit-testing on the same equal-width geometry it draws with.
 @MainActor
-private final class PowerMetricChipView: NSVisualEffectView {
-    private let titleLabel = NSTextField(labelWithString: "")
+final class PowerPolicySelector: NSView {
+    var onSelect: ((Int) -> Void)?
+    private let titles: [String]
+    private(set) var selectedIndex: Int
+
+    init(titles: [String], selectedIndex: Int) {
+        self.titles = titles
+        self.selectedIndex = min(max(0, selectedIndex), max(0, titles.count - 1))
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        setAccessibilityElement(true)
+        setAccessibilityRole(.radioGroup)
+        updateAccessibilityValue()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isOpaque: Bool { false }
+
+    func setSelectedIndex(_ index: Int) {
+        guard titles.indices.contains(index), index != selectedIndex else { return }
+        selectedIndex = index
+        updateAccessibilityValue()
+        needsDisplay = true
+    }
+
+    private func segmentFrame(_ index: Int) -> NSRect {
+        let count = max(1, titles.count)
+        let width = bounds.width / CGFloat(count)
+        return NSRect(
+            x: CGFloat(index) * width,
+            y: 0,
+            width: width,
+            height: bounds.height
+        )
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        for index in titles.indices {
+            let frame = segmentFrame(index)
+            let isSelected = index == selectedIndex
+            if isSelected {
+                let pill = frame.insetBy(dx: 1.5, dy: 1)
+                let radius = min(pill.height / 2, 9)
+                let path = NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius)
+                if isDark {
+                    NSColor.white.withAlphaComponent(0.17).setFill()
+                } else {
+                    NSColor.white.withAlphaComponent(0.96).setFill()
+                }
+                path.fill()
+                if !isDark {
+                    NSColor.black.withAlphaComponent(0.07).setStroke()
+                    path.lineWidth = 0.5
+                    path.stroke()
+                }
+            }
+            let font = NSFont.systemFont(ofSize: 11, weight: isSelected ? .semibold : .regular)
+            let color: NSColor
+            if isSelected {
+                color = isDark ? .white : .black
+            } else {
+                color = isDark
+                    ? NSColor.white.withAlphaComponent(0.72)
+                    : NSColor.black.withAlphaComponent(0.62)
+            }
+            let style = NSMutableParagraphStyle()
+            style.alignment = .center
+            let string = NSAttributedString(
+                string: titles[index],
+                attributes: [
+                    .font: font,
+                    .foregroundColor: color,
+                    .paragraphStyle: style,
+                ]
+            )
+            let textHeight = string.size().height
+            string.draw(in: NSRect(
+                x: frame.minX,
+                y: frame.midY - textHeight / 2,
+                width: frame.width,
+                height: textHeight + 1
+            ))
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard bounds.width > 0, !titles.isEmpty else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let raw = Int((point.x / bounds.width) * CGFloat(titles.count))
+        let index = min(titles.count - 1, max(0, raw))
+        setSelectedIndex(index)
+        onSelect?(index)
+    }
+
+    private func updateAccessibilityValue() {
+        guard titles.indices.contains(selectedIndex) else { return }
+        setAccessibilityValue(titles[selectedIndex])
+    }
+}
+
+@MainActor
+private final class PowerMetricChipView: NSVisualEffectView {    private let titleLabel = NSTextField(labelWithString: "")
     private let valueLabel = NSTextField(labelWithString: "")
     private let symbolView = NSImageView()
     private let accent: NSColor
@@ -1226,6 +1323,19 @@ final class FrostedPowerFlowView: NSView {
         for layout in layouts {
             drawCompactDestinationCard(layout)
             drawCompactMainRibbonLabel(layout)
+        }
+
+        // No destination data at all usually means the first menu open beat
+        // the first metrics fetch. Say so instead of showing a lone plug.
+        if layouts.isEmpty {
+            drawCenteredDesignText(
+                "正在读取电源数据…",
+                centerX: 645,
+                baselineY: 300,
+                size: 34,
+                weight: .medium,
+                color: compactTextColor
+            )
         }
     }
 

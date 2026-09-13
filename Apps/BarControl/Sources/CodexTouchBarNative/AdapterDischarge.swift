@@ -48,7 +48,7 @@ final class AdapterDischargeController {
         refresh()
         if policy == .discharging {
             guard helperInstalled else {
-                lastError = "未安装放电辅助组件"
+                lastError = "未安装放电组件"
                 return
             }
             setCut(true, reason: "policy-discharge")
@@ -98,7 +98,7 @@ final class AdapterDischargeController {
 
     func setCut(_ cut: Bool, reason: String) {
         guard helperInstalled else {
-            lastError = "未安装放电辅助组件"
+            lastError = "未安装放电组件"
             AppLog.write("adapter-cut \(cut ? "on" : "off") skipped reason=\(reason) error=helper-missing")
             return
         }
@@ -118,7 +118,7 @@ final class AdapterDischargeController {
                     "adapter-cut \(cut ? "on" : "off") reason=\(reason) verified chie=\(raw)"
                 )
             } else {
-                self.lastError = result.message ?? "放电辅助组件执行失败"
+                self.lastError = Self.humanReadableFailure(result.message)
                 if readBack {
                     self.isCut = raw != 0
                     UserDefaults.standard.set(raw != 0, forKey: Self.ownedCutKey)
@@ -128,6 +128,152 @@ final class AdapterDischargeController {
                 )
             }
         }
+    }
+
+    /// The helper prints one JSON line; surface its "note" instead of the
+    /// raw payload in the panel.
+    nonisolated static func humanReadableFailure(_ message: String?) -> String {
+        guard let message, !message.isEmpty else { return "放电辅助组件执行失败" }
+        if message.contains("password is required") {
+            return "放电组件未正确安装（请重装）"
+        }
+        if let data = message.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let note = object["note"] as? String,
+           !note.isEmpty {
+            return note
+        }
+        return message
+    }
+
+    // MARK: - One-time privileged install
+
+    private static let sudoersTemplate = """
+    # Bar Control 放电辅助组件：只允许下面这些固定命令免密执行。
+    Cmnd_Alias BARCONTROL_POWER_WRITE = /Library/PrivilegedHelperTools/barcontrol-power-helper discharge on, /Library/PrivilegedHelperTools/barcontrol-power-helper discharge off
+    Cmnd_Alias BARCONTROL_POWER_READ = /Library/PrivilegedHelperTools/barcontrol-power-helper status, /Library/PrivilegedHelperTools/barcontrol-power-helper probe
+    ALL ALL = NOPASSWD: BARCONTROL_POWER_WRITE, BARCONTROL_POWER_READ
+    """
+
+    /// Source binary: the app bundle's own copy, or the sibling build product
+    /// when running from `.build/release` during development.
+    nonisolated static func bundledHelperPath() -> String? {
+        if let executable = Bundle.main.executableURL {
+            let inBundle = executable.deletingLastPathComponent()
+                .appendingPathComponent("barcontrol-power-helper").path
+            if FileManager.default.isExecutableFile(atPath: inBundle) {
+                return inBundle
+            }
+        }
+        let argv0 = CommandLine.arguments.first ?? ""
+        let sibling = URL(fileURLWithPath: argv0)
+            .deletingLastPathComponent()
+            .appendingPathComponent("BarControlPowerHelper").path
+        if FileManager.default.isExecutableFile(atPath: sibling) {
+            return sibling
+        }
+        return nil
+    }
+
+    /// Installs the helper + sudoers allowlist through one system
+    /// authorization prompt (`osascript ... with administrator privileges`).
+    /// Returns true on success; a user-cancelled prompt reports false.
+    func installHelper() async -> Bool {
+        if helperInstalled { return true }
+        guard let source = Self.bundledHelperPath() else {
+            lastError = "找不到内置放电组件"
+            AppLog.write("install-helper failed: bundled binary missing")
+            return false
+        }
+        let tempDir = FileManager.default.temporaryDirectory
+        let sudoersURL = tempDir.appendingPathComponent("barcontrol-sudoers-\(getpid())")
+        let scriptURL = tempDir.appendingPathComponent("barcontrol-install-\(getpid()).sh")
+        do {
+            try Self.sudoersTemplate.write(to: sudoersURL, atomically: true, encoding: .utf8)
+            let quoted = { (path: String) -> String in
+                "'" + path.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+            }
+            let script = """
+            #!/bin/zsh
+            set -euo pipefail
+            /usr/sbin/visudo -c -f \(quoted(sudoersURL.path))
+            /bin/mkdir -p /Library/PrivilegedHelperTools
+            /usr/bin/ditto \(quoted(source)) \(quoted(Self.helperPath))
+            /usr/sbin/chown root:wheel \(quoted(Self.helperPath))
+            /bin/chmod 755 \(quoted(Self.helperPath))
+            /usr/bin/install -m 440 -o root -g wheel \(quoted(sudoersURL.path)) /etc/sudoers.d/barcontrol-power-helper
+            /bin/rm -f \(quoted(sudoersURL.path))
+            echo INSTALL_OK
+            """
+            try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+            let result = await Self.runOsascript(
+                scriptPath: scriptURL.path,
+                prompt: "Bar Control 需要一次性安装放电辅助组件（用于「优先放电」断开充电器）"
+            )
+            try? FileManager.default.removeItem(at: sudoersURL)
+            try? FileManager.default.removeItem(at: scriptURL)
+            if result.ok {
+                refresh()
+                AppLog.write("install-helper success installed=\(helperInstalled)")
+                if helperInstalled {
+                    let probe = await Self.runHelper(["probe"])
+                    if !probe.ok {
+                        lastError = "组件已安装，但系统拒绝写入（\(Self.humanReadableFailure(probe.message))）"
+                        AppLog.write("install-helper probe failed: \(probe.message ?? "nil")")
+                    } else {
+                        lastError = nil
+                    }
+                }
+            } else {
+                lastError = result.message
+                AppLog.write("install-helper failed: \(result.message ?? "unknown")")
+            }
+            return result.ok
+        } catch {
+            lastError = "安装准备失败：\(error.localizedDescription)"
+            AppLog.write("install-helper error: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    nonisolated private static func runOsascript(
+        scriptPath: String,
+        prompt: String
+    ) async -> HelperResult {
+        await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            // Path and prompt only contain quotes/apostrophes we manage here.
+            let escapedScript = scriptPath.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            let escapedPrompt = prompt.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            process.arguments = [
+                "-e",
+                "do shell script \"/bin/zsh '\(escapedScript)'\" with administrator privileges with prompt \"\(escapedPrompt)\""
+            ]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            do {
+                try process.run()
+            } catch {
+                return HelperResult(ok: false, message: error.localizedDescription)
+            }
+            let deadline = Date().addingTimeInterval(180)
+            while process.isRunning, Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            if process.isRunning {
+                process.terminate()
+                return HelperResult(ok: false, message: "授权超时")
+            }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let ok = process.terminationStatus == 0 && (text?.contains("INSTALL_OK") ?? false)
+            return HelperResult(ok: ok, message: text?.isEmpty == false ? text : nil)
+        }.value
     }
 
     /// Blocking best-effort restore for applicationWillTerminate. Uses
