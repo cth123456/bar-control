@@ -14,6 +14,13 @@ struct USBPowerFlow: Equatable, Sendable {
 struct USBDeviceDescriptor: Equatable, Sendable {
     let name: String
     let locationID: UInt32
+    let batteryPercent: Int?
+
+    init(name: String, locationID: UInt32, batteryPercent: Int? = nil) {
+        self.name = name
+        self.locationID = locationID
+        self.batteryPercent = batteryPercent
+    }
 }
 
 struct ProcessPowerSample: Equatable, Sendable {
@@ -45,6 +52,8 @@ struct SystemMetrics: Equatable, Sendable {
     /// Positive while charging, negative while discharging.
     let batteryWatts: Double?
     let batteryPercent: Int?
+    /// Best-effort battery percentage exposed by a connected iPad/iPhone.
+    let externalBatteryPercent: Int?
     let batteryTemperature: Double?
     let memoryPercent: Double?
     let gpuPercent: Double?
@@ -72,7 +81,8 @@ struct SystemMetrics: Equatable, Sendable {
         gpuWatts: Double? = nil,
         processPower: [ProcessPowerSample] = [],
         fanRPMs: [Double] = [],
-        gpuTemperature: Double? = nil
+        gpuTemperature: Double? = nil,
+        externalBatteryPercent: Int? = nil
     ) {
         self.externalPower = externalPower
         self.adapterLimitWatts = adapterLimitWatts
@@ -82,6 +92,7 @@ struct SystemMetrics: Equatable, Sendable {
         self.systemWatts = systemWatts
         self.batteryWatts = batteryWatts
         self.batteryPercent = batteryPercent
+        self.externalBatteryPercent = externalBatteryPercent
         self.batteryTemperature = batteryTemperature
         self.memoryPercent = memoryPercent
         self.gpuPercent = gpuPercent
@@ -124,7 +135,8 @@ struct SystemMetrics: Equatable, Sendable {
             USBPowerFlow(portIndex: 1, name: "iPad", watts: 10.7, voltage: 5.1, current: 2.1),
             USBPowerFlow(portIndex: 2, name: "USB-C 显示器", watts: 3.83, voltage: 5.0, current: 0.77),
             USBPowerFlow(portIndex: 3, name: "USB-C 设备", watts: 9.15, voltage: 5.0, current: 1.83)
-        ]
+        ],
+        externalBatteryPercent: 68
     )
 
     static let previewBatteryIdle = SystemMetrics(
@@ -186,7 +198,8 @@ struct SystemMetrics: Equatable, Sendable {
         batteryTemperature: 33.7,
         memoryPercent: 61,
         gpuPercent: 28,
-        usbOutputs: [preview.usbOutputs[0], preview.usbOutputs[2]]
+        usbOutputs: [preview.usbOutputs[0], preview.usbOutputs[2]],
+        externalBatteryPercent: 68
     )
 
     static let previewSingleOutput = SystemMetrics(
@@ -201,7 +214,8 @@ struct SystemMetrics: Equatable, Sendable {
         batteryTemperature: 33.7,
         memoryPercent: 61,
         gpuPercent: 28,
-        usbOutputs: [preview.usbOutputs[0]]
+        usbOutputs: [preview.usbOutputs[0]],
+        externalBatteryPercent: 68
     )
 
     /// Underpowered-adapter hierarchy fixture from IMG_4665: 84 W from the
@@ -391,6 +405,10 @@ enum SystemMetricsReader {
         let hardwarePower = PowerTelemetrySampler.shared.read()
         let fanRPMs = readFanRPMs()
         let gpuTemperature = readGPUTemperature()
+        let devices = usbDevices()
+        let externalBatteryPercent = devices
+            .first(where: { isExternalBatteryDevice($0.name) && $0.batteryPercent != nil })?
+            .batteryPercent
 
         return SystemMetrics(
             externalPower: externalPower,
@@ -406,13 +424,14 @@ enum SystemMetricsReader {
             gpuPercent: gpuPercent,
             usbOutputs: decodePowerOutputs(
                 raw: battery["PowerOutDetails"],
-                usbDevices: usbDevices()
+                usbDevices: devices
             ),
             cpuWatts: hardwarePower.cpuWatts,
             gpuWatts: hardwarePower.gpuWatts,
             processPower: hardwarePower.processes,
             fanRPMs: fanRPMs,
-            gpuTemperature: gpuTemperature
+            gpuTemperature: gpuTemperature,
+            externalBatteryPercent: externalBatteryPercent
         )
     }
 
@@ -479,8 +498,28 @@ enum SystemMetricsReader {
                 ?? (properties["USB Product Name"] as? String)
             guard let rawName, !rawName.isEmpty else { return nil }
             let locationID = number(properties["locationID"]).map { UInt32($0) } ?? 0
-            return USBDeviceDescriptor(name: friendlyDeviceName(rawName), locationID: locationID)
+            return USBDeviceDescriptor(
+                name: friendlyDeviceName(rawName),
+                locationID: locationID,
+                batteryPercent: batteryPercent(from: properties)
+            )
         }
+    }
+
+    private static func batteryPercent(from properties: [String: Any]) -> Int? {
+        let keys = ["BatteryPercent", "BatteryPercentage", "Battery Level", "BatteryLevel"]
+        for key in keys {
+            guard let raw = number(properties[key]), raw.isFinite else { continue }
+            let percent = raw <= 1 ? raw * 100 : raw
+            guard (0...100).contains(percent) else { continue }
+            return Int(percent.rounded())
+        }
+        return nil
+    }
+
+    private static func isExternalBatteryDevice(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return lower.contains("ipad") || lower.contains("iphone")
     }
 
     private static func devicePriority(_ name: String) -> Int {
@@ -708,7 +747,11 @@ final class PowerRunnerButton: NSButton {
         contentTintColor = .systemTeal
         setAccessibilityLabel("整机功率动画")
         setAccessibilityHelp("点击进入 Touch Bar 整机详细信息")
-        frames = Self.loadFrames(for: style)
+        frames = PowerRunnerButton.cachedFrames(for: style)
+        if frames.isEmpty {
+            frames = PowerRunnerButton.loadFramesFromDisk(for: style)
+            PowerRunnerButton.cacheFrames(frames, for: style)
+        }
         image = frames.first ?? NSImage(systemSymbolName: "hare.fill", accessibilityDescription: "整机功率")
         updateToolTip()
     }
@@ -737,7 +780,11 @@ final class PowerRunnerButton: NSButton {
     func setStyle(_ style: PowerRunnerStyle) {
         guard self.style != style || frames.isEmpty else { return }
         self.style = style
-        frames = Self.loadFrames(for: style)
+        frames = PowerRunnerButton.cachedFrames(for: style)
+        if frames.isEmpty {
+            frames = PowerRunnerButton.loadFramesFromDisk(for: style)
+            PowerRunnerButton.cacheFrames(frames, for: style)
+        }
         animationFrame = 0
         image = frames.first ?? NSImage(systemSymbolName: "hare.fill", accessibilityDescription: "整机功率")
         updateToolTip()
@@ -778,7 +825,41 @@ final class PowerRunnerButton: NSButton {
         }
     }
 
-    private static func loadFrames(for style: PowerRunnerStyle) -> [NSImage] {
+    // MARK: - 帧图预加载
+
+    /// 每样式帧图缓存：后台线程加载，避免主线程同步读盘/解码拖慢首次绘制。
+    private static var frameCache: [PowerRunnerStyle: [NSImage]] = [:]
+    private static let frameCacheLock = NSLock()
+
+    static func cachedFrames(for style: PowerRunnerStyle) -> [NSImage] {
+        frameCacheLock.lock()
+        defer { frameCacheLock.unlock() }
+        if let frames = frameCache[style] { return frames }
+        return []
+    }
+
+    static func cacheFrames(_ frames: [NSImage], for style: PowerRunnerStyle) {
+        frameCacheLock.lock()
+        defer { frameCacheLock.unlock() }
+        frameCache[style] = frames
+    }
+
+    /// 启动时后台预热所有样式的帧图，之后 setStyle/init 直接用缓存。
+    static func warmFramesInBackground() {
+        DispatchQueue.global(qos: .utility).async {
+            let styles = PowerRunnerStyle.allCases
+            for style in styles {
+                if cachedFrames(for: style).isEmpty {
+                    let frames = loadFramesFromDisk(for: style)
+                    if !frames.isEmpty {
+                        cacheFrames(frames, for: style)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func loadFramesFromDisk(for style: PowerRunnerStyle) -> [NSImage] {
         let sourceRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()

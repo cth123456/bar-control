@@ -75,10 +75,39 @@ iPhone 客户端源码位于相邻目录 `../BarControlRemote`。Mac 与 iPhone 
 ./install.command
 ```
 
+## Mac 供电策略（已接入系统充电控制）
+
+菜单栏能源流面板底部的“Mac 供电”分段按钮是三态策略：优先充电 / 负载均衡 / 优先放电，默认负载均衡，选择会保存。
+
+真实控制走 macOS 26+ 的私有 PowerUI **Manual Charge Limit（MCL）**：
+
+- 优先充电 → 上限 100%，Mac 正常充满；
+- 负载均衡 → 上限 80%，电量 ≥80% 时立即停止充电；Mac 电量 <20% 时自动放回 100%；
+- 优先放电 → 同上限 80%，并在安装辅助组件后进一步通过 SMC `CHIE` 键断开充电器，让外接设备优先取电；Mac 电量 <20%、切回其他策略或退出 App 时自动恢复。
+
+读取随时可用；“已接入/上限xx%”会显示在“Mac 供电”标签上。
+
+**系统硬限制（实测）**：本机（MacBookPro17,1，macOS 27 固件 20457.x）已移除可写的充电 SMC 键（`CH0B/CH0C/CHTE` 不存在，`bfF0/bfD0/bfE0` 被系统 entitlement 锁死，root 也无效），开源方案（AlDente 旧版、battery.sh、batt）的写键路径全部失效。MCL 是唯一可用通道，且**低于 80% 的上限会被系统拒绝**（`PowerUISmartChargingErrorDomain Code=4`），所以 Mac 电量 <80% 时无法真正“停止充电”，此时策略只表现为“不外送给外接设备充电”。
+
+### 可选：优先放电辅助组件
+
+“优先放电”若要真正断开充电器，需要一次管理员授权安装特权组件：
+
+```sh
+./install-power-helper.command    # 需输入一次密码；可重复运行
+./uninstall-power-helper.command  # 恢复充电器并删除特权文件
+```
+
+安装脚本只做三件事：把 `barcontrol-power-helper` 复制到 `/Library/PrivilegedHelperTools/`（root:wheel，755）、写入 `/etc/sudoers.d/barcontrol-power-helper`（只放行 `discharge on/off`、`status`、`probe` 四条固定命令）、做一次写回探测。App 通过 `sudo -n` 调用，绝不弹密码；未安装时界面显示“未安装放电组件”，其他策略不受影响。
+
+注意：CHIE 写入在部分新固件上可能被拒绝（安装脚本的 `probe` 会直接告诉你结果）。若被拒绝，“优先放电”退回到系统 80% 上限行为，不会产生副作用。
+
 ## Touch Bar 亮度
 
 macOS 没有公开的 Touch Bar 面板亮度 API，但系统私有 `DFRBrightnessClient` 在当前机型上提供真实的 OLED 调光档位。App 默认把已点亮的 Touch Bar 保持在最亮档 1；每 5 秒仅在档位被系统改低时校正一次，不会在 Touch Bar 已关闭或整机休眠时唤醒它。可在“更多操作 → Touch Bar 保持最亮”随时关闭。
 
 ## Codex++ 与供应商用量
 
-供应商切换由 Codex++ 管理，Bar Control 使用 `~/Library/Application Support/BarControl/provider-store.db` 保存迁移后的私有供应商与余额检测配置，不再依赖 CC Switch。余额检测只向供应商配置中的同源 HTTPS 端点发起请求，不输出或刷新密钥；当前支持自定义用量脚本及 DeepSeek 原生余额模板。官方 Codex 账户只用当前已有 access token 查询额度，不刷新 token；无法查询的供应商明确显示暂无数据。
+供应商后端由 `~/Library/Application Support/BarControl/backend-mode.json` 统一管理，Bar Control 与 PhoneCodex 共用。`auto` 会优先使用 CC Switch 的 `~/.cc-switch`，找不到时回退到原 Codex++ 私有库；也可选择 `ccswitch`、`codexpp`，或填写自定义数据库与 settings 路径。双击 `configure-provider-backend.command` 即可选择，配置示例见 `backend-mode.example.json`。
+
+余额检测只向供应商配置中的同源 HTTPS 端点发起请求，不输出或刷新密钥。仓库不再保存 Apple Team、CloudKit 容器或个人中继地址；旧 CloudKit 客户端作为可选后备，仅在本机 `.signing/` 提供描述文件、entitlements 与 `build.env` 时启用。

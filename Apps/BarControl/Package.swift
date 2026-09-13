@@ -15,6 +15,7 @@ let package = Package(
             publicHeadersPath: "include",
             linkerSettings: [
                 .linkedFramework("CoreFoundation"),
+                .linkedFramework("Foundation"),
                 .linkedFramework("IOKit")
             ]
         ),
@@ -22,6 +23,11 @@ let package = Package(
             name: "CodexTouchBarNative",
             dependencies: ["PowerTelemetrySupport"],
             path: "Sources/CodexTouchBarNative"
+        ),
+        .executableTarget(
+            name: "BarControlPowerHelper",
+            dependencies: ["PowerTelemetrySupport"],
+            path: "Sources/BarControlPowerHelper"
         ),
         .testTarget(
             name: "CodexTouchBarNativeTests",

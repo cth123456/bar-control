@@ -52,6 +52,39 @@ private struct LocalModelStatus: Equatable {
     }
 }
 
+/// 模块 item 的固定尺寸透明容器。系统按 item 视图的 intrinsicContentSize 决定 item
+/// 尺寸并会改写直接子视图，所以按钮必须包在容器里、容器报告精确的「宽×30」。
+@MainActor
+private final class ModuleItemView: NSView {
+    private var size: NSSize
+
+    init(width: CGFloat) {
+        size = NSSize(width: width, height: 30)
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 30))
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize { size }
+
+    override func contentHuggingPriority(for orientation: NSLayoutConstraint.Orientation) -> NSLayoutConstraint.Priority {
+        .required
+    }
+
+    override func contentCompressionResistancePriority(for orientation: NSLayoutConstraint.Orientation) -> NSLayoutConstraint.Priority {
+        .required
+    }
+
+    func setWidth(_ width: CGFloat) {
+        guard abs(size.width - width) > 0.5 else { return }
+        size.width = width
+        frame.size.width = width
+        invalidateIntrinsicContentSize()
+    }
+}
+
 private final class PaddedPillButtonCell: NSButtonCell {
     private let leadingOffset: CGFloat = 8
 
@@ -78,6 +111,32 @@ private enum MainComponent: String, CaseIterable {
     static let defaultsKey = "mainComponentOrder.v1"
     static let visibilityPrefix = "mainComponentVisible.v1."
     static let widthPrefix = "mainComponentWidth.v1."
+    static let slotsKey = "mainComponentSlots.v1"
+    static let slotCount = 6
+    /// 空槽位在实体 Touch Bar 上留白的固定宽度。
+    static let emptySlotWidth: CGFloat = 48
+
+    // MARK: - 软件可用性（与具体软件解耦：没装对应软件就不显示该模块）
+
+    /// 模块对应的软件是否可用。未安装对应软件的模块在 Touch Bar/自定义面板中不出现，
+    /// 装好软件后重新打开即出现。systemMonitor 为纯系统动画，不依赖任何软件。
+    var isSoftwareAvailable: Bool {
+        let manager = FileManager.default
+        switch self {
+        case .systemMonitor:
+            return true
+        case .sidecar:
+            return manager.fileExists(atPath: "/Applications/随航管家.app")
+        case .localModel:
+            return manager.fileExists(atPath: "/Applications/本地模型.app")
+        case .aiCoding:
+            // AI coding 数据来自 Codex/CC Switch/ZCode 配置；装了任一即视为可用。
+            if manager.fileExists(atPath: NSHomeDirectory() + "/.codex") { return true }
+            if manager.fileExists(atPath: NSHomeDirectory() + "/.zcode/v2/config.json") { return true }
+            if manager.fileExists(atPath: NSHomeDirectory() + "/.cc-switch/cc-switch.db") { return true }
+            return manager.fileExists(atPath: "/Applications/ChatGPT.app")
+        }
+    }
 
     var title: String {
         switch self {
@@ -94,6 +153,16 @@ private enum MainComponent: String, CaseIterable {
         case .aiCoding: return "curlybraces.square.fill"
         case .systemMonitor: return "hare.fill"
         case .localModel: return "waveform.circle.fill"
+        }
+    }
+
+    /// 预览格子使用的短名称。
+    var shortTitle: String {
+        switch self {
+        case .sidecar: return "随航"
+        case .aiCoding: return "AI"
+        case .systemMonitor: return "功耗"
+        case .localModel: return "本地"
         }
     }
 
@@ -135,6 +204,71 @@ private enum MainComponent: String, CaseIterable {
         UserDefaults.standard.set(order.map(\.rawValue), forKey: defaultsKey)
     }
 
+    /// 读取槽位布局（长度固定 slotCount）。槽位是 Touch Bar 排布的权威来源：
+    /// 某模块出现在某槽位 = 显示在那里；模块不在任何槽位 = 不显示。
+    /// 首次运行读不到 slots 时，用旧 order + visibility 迁移出初始槽位。
+    static func loadSlots() -> [MainComponent?] {
+        var slots = Array<MainComponent?>(repeating: nil, count: slotCount)
+        if let stored = UserDefaults.standard.stringArray(forKey: slotsKey) {
+            for (index, value) in stored.enumerated() where index < slotCount {
+                if let component = MainComponent(rawValue: value) {
+                    slots[index] = component
+                }
+            }
+            return slots
+        }
+        let legacyOrder = loadOrder()
+        let legacyVisibility = loadVisibility()
+        var cursor = 0
+        for component in legacyOrder where legacyVisibility[component] ?? true {
+            guard cursor < slotCount else { break }
+            slots[cursor] = component
+            cursor += 1
+        }
+        return slots
+    }
+
+    static func saveSlots(_ slots: [MainComponent?]) {
+        let values = slots.map { $0?.rawValue ?? "" }
+        UserDefaults.standard.set(values, forKey: slotsKey)
+    }
+
+    /// 把「各槽位基础宽」按「空槽吃剩余」规则分配到指定总宽，返回各槽位实际像素宽。
+    /// 实体 Touch Bar 布局与预览条格子都复用它，保证两者宽度分布永远一致。
+    /// - baseWidths：各槽位基础宽（模块用配置/动态宽，空槽位用 emptySlotWidth）。
+    /// - emptyFlags：标记哪个槽位是空槽位。
+    /// - gap：槽位间间距。
+    /// - total：目标总宽（实体=Touch Bar 实际可用宽，预览=预览条可用宽）。
+    /// - 返回：各槽位实际像素宽，Σ结果 + gap*(n-1) 恰为 total（有剩余时），铺满。
+    static func distribute(
+        baseWidths: [CGFloat],
+        emptyFlags: [Bool],
+        gap: CGFloat,
+        within total: CGFloat
+    ) -> [CGFloat] {
+        guard baseWidths.count == emptyFlags.count, !baseWidths.isEmpty else { return baseWidths }
+        let baseTotal = baseWidths.reduce(0, +) + gap * CGFloat(baseWidths.count - 1)
+        let surplus = max(0, total - baseTotal)
+        let emptyCount = emptyFlags.filter { $0 }.count
+        let nonEmptyCount = baseWidths.count - emptyCount
+
+        var widths = baseWidths.enumerated().map { index, width in
+            if emptyFlags[index] {
+                return emptyCount > 0 ? width + surplus / CGFloat(emptyCount) : width
+            } else {
+                return emptyCount == 0 && nonEmptyCount > 0 ? width + surplus / CGFloat(nonEmptyCount) : width
+            }
+        }
+
+        // 把剩余空间补给最后一个槽位，使它的右缘精确对齐 total（最右贴齐）。
+        // 否则当最右槽位是内容模块、且中间空槽位吃走全部剩余时，它会停在左侧留白，视觉在中间。
+        let rowWidth = widths.reduce(0, +) + gap * CGFloat(widths.count - 1)
+        if rowWidth < total, let last = widths.indices.last {
+            widths[last] += total - rowWidth
+        }
+        return widths
+    }
+
     static func loadVisibility() -> [MainComponent: Bool] {
         Dictionary(uniqueKeysWithValues: allCases.map { component in
             let key = visibilityPrefix + component.rawValue
@@ -160,18 +294,31 @@ private enum MainComponent: String, CaseIterable {
 }
 
 @MainActor
-final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
+final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NSWindowDelegate {
     private enum Item {
         static let mainContainer = NSTouchBarItem.Identifier("CodexTouchBarNative.mainContainer.v7")
+        static let sidecar = NSTouchBarItem.Identifier("CodexTouchBarNative.sidecar.v1")
+        static let aiCoding = NSTouchBarItem.Identifier("CodexTouchBarNative.aiCoding.v1")
+        static let systemMonitor = NSTouchBarItem.Identifier("CodexTouchBarNative.systemMonitor.v1")
+        static let localModel = NSTouchBarItem.Identifier("CodexTouchBarNative.localModel.v1")
         static let detailContainer = NSTouchBarItem.Identifier("CodexTouchBarNative.detailContainer.v7")
         static let usageContainer = NSTouchBarItem.Identifier("CodexTouchBarNative.usageContainer.v2")
         static let systemContainer = NSTouchBarItem.Identifier("CodexTouchBarNative.systemContainer.v1")
         static let controlStrip = NSTouchBarItem.Identifier("CodexTouchBarNative.controlStrip")
+
+        /// 空槽占位 item（带槽位下标，保证每个空槽一个独立 id，避免系统按 id 复用冲突）。
+        static func emptySlot(_ index: Int) -> NSTouchBarItem.Identifier {
+            NSTouchBarItem.Identifier("CodexTouchBarNative.emptySlot.\(index)")
+        }
+
+        /// 弹性占位 item：插在最后一个模块前，把最后模块的胶囊推到实体条最右侧。
+        static let flexSpacer = NSTouchBarItem.Identifier("CodexTouchBarNative.flexSpacer.v1")
     }
 
     private enum DefaultsKey {
         static let showPillBorders = "showPillBorders.v1"
         static let keepTouchBarMaximumBrightness = "keepTouchBarMaximumBrightness.v1"
+        static let persistentModules = "persistentModules.v1"
     }
 
     private let touchBar = NSTouchBar()
@@ -180,6 +327,9 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
     private lazy var touchBarPower = TouchBarPower()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var controlStripItem: NSCustomTouchBarItem?
+    /// 主层/详情层各 item 的缓存：NSTouchBar delegate 要求同一 identifier 返回稳定实例，
+    /// 绝不能每次 makeItem 都新建（否则模态/Control Strip 上下文会错乱、模块消失）。
+    private var touchBarItems: [String: NSTouchBarItem] = [:]
     private weak var aiCodingButton: NSButton?
     private weak var sidecarButton: NSButton?
     private weak var systemMonitorButton: PowerRunnerButton?
@@ -187,15 +337,21 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
     private weak var voiceButton: NSButton?
     private weak var controlStripButton: NSButton?
     private weak var quotaView: QuotaView?
-    private weak var sessionView: SessionStripView?
     private weak var usageDetailView: UsageDetailStripView?
     private weak var systemDetailView: SystemDetailStripView?
     private weak var powerFlowView: PowerFlowPanelView?
-    private weak var borderMenuItem: NSMenuItem?
     private weak var brightnessMenuItem: NSMenuItem?
     private var runnerMenuItems: [NSMenuItem] = []
-    private var componentOrder = MainComponent.loadOrder()
-    private var componentVisibility = MainComponent.loadVisibility()
+    private var componentSlots = MainComponent.loadSlots()
+    /// 当前实际生效的槽位布局：过滤掉「对应软件未安装」的模块（与具体软件解耦）。
+    /// 布局、菜单栏分组、预览都用这一层，避免出现点了无响应的模块。
+    private var effectiveSlots: [MainComponent?] {
+        componentSlots.map { slot in
+            guard let component = slot, component.isSoftwareAvailable else { return nil }
+            return component
+        }
+    }
+    private var componentOrder: [MainComponent] { effectiveSlots.compactMap { $0 } }
     private var componentWidths = MainComponent.loadWidths()
     private var showPillBorders = UserDefaults.standard.bool(forKey: DefaultsKey.showPillBorders)
     private var keepTouchBarMaximumBrightness: Bool = {
@@ -203,19 +359,110 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         guard defaults.object(forKey: DefaultsKey.keepTouchBarMaximumBrightness) != nil else { return true }
         return defaults.bool(forKey: DefaultsKey.keepTouchBarMaximumBrightness)
     }()
+    /// 常驻模式：把模块栏以无关闭钮的系统模态长驻在触控栏中间区域（正常状态可见）。
+    private var persistentModules: Bool = {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: DefaultsKey.persistentModules) != nil else { return true }
+        return defaults.bool(forKey: DefaultsKey.persistentModules)
+    }()
+    /// 实测的 item 起始偏移（随关闭钮显隐而变化），持久化——呈现时即用正确值，
+    /// 避免 0.8s 后空槽宽度重算导致模块二次位移（重新唤出时的"卡一下才到位"）。
+    private var measuredLeadingOffset: CGFloat? {
+        get { UserDefaults.standard.object(forKey: "measuredLeadingOffset.v1") as? CGFloat }
+        set { UserDefaults.standard.set(newValue, forKey: "measuredLeadingOffset.v1") }
+    }
+    private weak var persistentMenuItem: NSMenuItem?
     private var powerRunnerStyle = PowerRunnerStyle.load()
     private var orderPanel: NSPanel?
     private weak var orderStack: NSStackView?
+    private weak var slotPreviewStack: NSStackView?
+    private var slotPreviewButtons: [NSButton] = []
+    private weak var aiDisplayMenu: NSMenu?
+    private var aiDisplayMenuKey = ""
+    private var aiDisplayMenuOpen = false
+    private var pendingAIQuotaRefresh = false
+    private weak var customStack: NSStackView?
+
+    static let moduleIconPrefix = "moduleIcon.v1."
+    static let moduleLabelPrefix = "moduleLabel.v1."
+    static let moduleTextModePrefix = "moduleTextMode.v1."
+    /// 自定义面板可选的 SF Symbols 图标清单。
+    static let symbolChoices = [
+        "waveform.circle.fill", "mic.circle.fill", "brain.head.profile", "sparkles",
+        "cpu", "memorychip", "gauge.circle.fill", "bolt.circle.fill", "power", "fan.fill",
+        "ipad.and.iphone", "laptopcomputer.and.iphone", "display",
+        "curlybraces.square.fill", "chevron.left.forwardslash.chevron.right", "terminal.fill",
+        "gearshape.fill", "ellipsis.circle.fill", "heart.fill", "star.fill", "moon.fill", "wifi"
+    ]
+
+    private func storedIcon(for component: MainComponent) -> String {
+        UserDefaults.standard.string(forKey: Self.moduleIconPrefix + component.rawValue) ?? ""
+    }
+
+    private func storedLabel(for component: MainComponent) -> String {
+        UserDefaults.standard.string(forKey: Self.moduleLabelPrefix + component.rawValue) ?? ""
+    }
+
+    /// 文字显示模式：默认名称 / 无（纯图标）/ 自定义文字。
+    private enum ModuleTextMode: String {
+        case defaultName = "default"
+        case none = "none"
+        case custom = "custom"
+    }
+
+    private func storedTextMode(for component: MainComponent) -> ModuleTextMode {
+        if let raw = UserDefaults.standard.string(forKey: Self.moduleTextModePrefix + component.rawValue),
+           let mode = ModuleTextMode(rawValue: raw) {
+            return mode
+        }
+        // 旧数据迁移：之前存过非空自定义文字的按自定义处理，否则按默认。
+        if !(UserDefaults.standard.string(forKey: Self.moduleLabelPrefix + component.rawValue) ?? "").isEmpty {
+            return .custom
+        }
+        return .defaultName
+    }
+
+    /// 生效标题：nil = 用模块内置默认行为；"" = 纯图标；非空 = 自定义文字。
+    private func effectiveTitle(for component: MainComponent) -> String? {
+        switch storedTextMode(for: component) {
+        case .defaultName: return nil
+        case .none: return ""
+        case .custom: return storedLabel(for: component)
+        }
+    }
+
+    /// 本地模型生效的图标/文字：用户自定义优先，否则按状态内置。
+    private var effectiveLocalModelTitle: String {
+        if let title = effectiveTitle(for: .localModel) { return title }
+        return localModelPresentation.title
+    }
+
+    /// 模态 Touch Bar 布局实测常量（coords 日志，本机 756pt 条）：
+    /// items 从 x=64 起（系统关闭钮区），item 间距 8，右缘留 8。
+    static let modalLeadingOffset: CGFloat = 64
+    static let modalItemGap: CGFloat = 8
+    static let modalRightMargin: CGFloat = 8
+    static let fallbackModalWidth: CGFloat = 756
+    /// 空槽占位容器（按槽位下标索引），用于把剩余空间平摊给空槽。
+    /// 主层单容器（present 时只挂载这一个 item，避免 6 个独立 item 逐个出现的卡顿）。
+    private var mainContainerView: ModuleItemView?
+    /// 空槽占位 view（按槽位下标），在主层容器内手动布局。
+    private var mainEmptySlotViews: [Int: NSView] = [:]
+
+    private var effectiveLocalModelSymbol: String {
+        let icon = storedIcon(for: .localModel)
+        return icon.isEmpty ? localModelPresentation.symbol : icon
+    }
     private var snapshot = CodexSnapshot.loading
     private var selectedUsageAccountKey: String?
     private var refreshTimer: Timer?
     private var sidecarTimer: Timer?
     private var metricsTimer: Timer?
     private var brightnessTimer: Timer?
+    private let universalControlWatchdog = UniversalControlWatchdog()
     private var isRefreshing = false
     private var isMetricsRefreshing = false
     private var didCreateVisibleItem = false
-    private weak var statusMenuHeader: NSMenuItem?
     private var lastLoggedStatus = ""
     private var lastLoggedMetrics = ""
     private var sidecarStatus = SidecarStatus.idle
@@ -239,12 +486,14 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
     }
 
     func start() {
+        // 后台预热跑猫等所有动画帧图，避免主线程首次读盘拖慢呈现。
+        PowerRunnerButton.warmFramesInBackground()
         AppLog.reset()
         AppLog.write("start bundle=\(Bundle.main.bundlePath)")
         AppLog.write("menu items=\(statusItem.menu?.items.map(\.title) ?? [])")
         NSApp.touchBar = touchBar
         installControlStripItem()
-        remoteControl.start()
+        // 远程控制台已并入 phonecodex Mac app，BarControl 不再启动。
         if let switchIndex = CommandLine.arguments.firstIndex(of: "--switch-provider"),
            switchIndex + 1 < CommandLine.arguments.count {
             remoteControl.switchProvider(id: CommandLine.arguments[switchIndex + 1])
@@ -291,7 +540,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         brightnessTimer = nil
         systemMonitorButton?.stopAnimating()
         powerFlowView?.stopAnimating()
-        remoteControl.stop()
+        universalControlWatchdog.stop()
         if let controlStripItem {
             ControlStrip.remove(controlStripItem)
         }
@@ -587,23 +836,19 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             self.localModelStatus = LocalModelStatus(state: "thinking", message: "云端思考中")
             self.renderPreview(self.makeMainContainer(), name: "local-model-cloud")
             self.localModelStatus = .idle
-            let liveOrder = self.componentOrder
-            let liveVisibility = self.componentVisibility
+            let liveSlots = self.componentSlots
             let liveWidths = self.componentWidths
             self.localModelStatus = LocalModelStatus(state: "recording", message: "说话中")
-            self.componentOrder = [.sidecar, .aiCoding, .localModel, .systemMonitor]
+            self.componentSlots = [.sidecar, .aiCoding, .localModel, .systemMonitor, nil, nil]
             let localBeforeRunner = self.makeMainContainer()
-            assert((self.systemMonitorButton?.frame.maxX ?? .infinity) <= localBeforeRunner.bounds.maxX)
             self.renderPreview(localBeforeRunner, name: "local-model-before-runner")
             self.localModelStatus = .idle
-            self.componentOrder = [.localModel, .systemMonitor, .sidecar, .aiCoding]
+            self.componentSlots = [.localModel, .systemMonitor, .sidecar, .aiCoding, nil, nil]
             self.renderPreview(self.makeMainContainer(), name: "main-custom-order")
-            self.componentVisibility[.sidecar] = false
-            self.componentVisibility[.localModel] = false
+            self.componentSlots = [nil, .localModel, nil, nil, nil, .sidecar]
             self.componentWidths[.systemMonitor] = MainComponent.systemMonitor.widthRange.lowerBound
-            self.renderPreview(self.makeMainContainer(), name: "main-compact-hidden")
-            self.componentOrder = liveOrder
-            self.componentVisibility = liveVisibility
+            self.renderPreview(self.makeMainContainer(), name: "main-empty-slots")
+            self.componentSlots = liveSlots
             self.componentWidths = liveWidths
             self.showComponentOrder()
             if let settingsView = self.orderPanel?.contentView {
@@ -958,6 +1203,125 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         }
     }
 
+    /// Headless end-to-end check for the panel's charge policy: applies
+    /// "优先充电" (full charge), "负载均衡" (80% hold), and — when the
+    /// discharge helper is installed — "优先放电" (charger cut), logging the
+    /// PowerUI/SMC read-back and the live battery direction at each step.
+    func runChargingLimitProbe() {
+        Task { [weak self] in
+            let controller = ChargingLimitController.shared
+            let adapter = AdapterDischargeController.shared
+            controller.refreshSnapshot()
+            adapter.refresh()
+            AppLog.write(
+                "charging-limit probe start supported=\(controller.snapshot.isSupported) enabled=\(controller.snapshot.isEnabled) limit=\(controller.snapshot.limitPercent.map(String.init) ?? "nil") helperInstalled=\(adapter.helperInstalled) chieCut=\(adapter.isCut)"
+            )
+            guard controller.snapshot.isSupported else {
+                AppLog.write("charging-limit probe abort: unsupported")
+                NSApp.terminate(nil)
+                return
+            }
+
+            PowerFlowPolicyStore.current = .charging
+            let chargingMetrics = await SystemMetricsReader.fetch()
+            controller.update(
+                policy: .charging,
+                metrics: chargingMetrics,
+                userInitiated: true
+            )
+            try? await Task.sleep(for: .seconds(2))
+            controller.refreshSnapshot()
+            let afterCharging = controller.snapshot.limitPercent.map(String.init) ?? "nil"
+            try? await Task.sleep(for: .seconds(10))
+            let chargingSample = await SystemMetricsReader.fetch()
+            let chargingWatts = chargingSample.batteryWatts.map {
+                String(format: "%.2f", $0)
+            } ?? "nil"
+            AppLog.write(
+                "charging-limit probe charging step: systemLimit=\(afterCharging) batteryWatts=\(chargingWatts) percent=\(chargingSample.batteryPercent.map(String.init) ?? "nil")"
+            )
+            self?.renderPreview(
+                self?.makePowerFlowMaterialPreview(
+                    metrics: chargingSample,
+                    appearance: NSAppearance(named: .aqua)
+                ) ?? NSView(),
+                name: "power-flow-charging-policy-light"
+            )
+
+            PowerFlowPolicyStore.current = .balanced
+            controller.update(
+                policy: .balanced,
+                metrics: chargingSample,
+                userInitiated: true
+            )
+            try? await Task.sleep(for: .seconds(2))
+            controller.refreshSnapshot()
+            let afterBalanced = controller.snapshot.limitPercent.map(String.init) ?? "nil"
+            try? await Task.sleep(for: .seconds(8))
+            let balancedSample = await SystemMetricsReader.fetch()
+            let balancedWatts = balancedSample.batteryWatts.map {
+                String(format: "%.2f", $0)
+            } ?? "nil"
+            AppLog.write(
+                "charging-limit probe balanced step: systemLimit=\(afterBalanced) batteryWatts=\(balancedWatts) percent=\(balancedSample.batteryPercent.map(String.init) ?? "nil")"
+            )
+            self?.renderPreview(
+                self?.makePowerFlowMaterialPreview(
+                    metrics: balancedSample,
+                    appearance: NSAppearance(named: .darkAqua)
+                ) ?? NSView(),
+                name: "power-flow-balanced-policy-dark"
+            )
+
+            // Optional: exercise the privileged discharge path when the
+            // helper has been installed; otherwise report and continue.
+            adapter.refresh()
+            if adapter.helperInstalled {
+                PowerFlowPolicyStore.current = .discharging
+                adapter.handlePolicySelection(.discharging)
+                try? await Task.sleep(for: .seconds(4))
+                adapter.refresh()
+                let cutState = adapter.isCut
+                let dischargeSample = await SystemMetricsReader.fetch()
+                let dischargeWatts = dischargeSample.batteryWatts.map {
+                    String(format: "%.2f", $0)
+                } ?? "nil"
+                AppLog.write(
+                    "charging-limit probe discharge step: chieCut=\(cutState) batteryWatts=\(dischargeWatts) percent=\(dischargeSample.batteryPercent.map(String.init) ?? "nil") error=\(adapter.lastError ?? "nil")"
+                )
+                self?.renderPreview(
+                    self?.makePowerFlowMaterialPreview(
+                        metrics: dischargeSample,
+                        appearance: NSAppearance(named: .darkAqua)
+                    ) ?? NSView(),
+                    name: "power-flow-discharge-policy-dark"
+                )
+                PowerFlowPolicyStore.current = .balanced
+                adapter.handlePolicySelection(.balanced)
+                try? await Task.sleep(for: .seconds(3))
+                adapter.refresh()
+                AppLog.write(
+                    "charging-limit probe discharge restore: chieCut=\(adapter.isCut)"
+                )
+            } else {
+                AppLog.write(
+                    "charging-limit probe discharge step skipped: helper not installed"
+                )
+            }
+
+            // Leave the machine in the standing balanced state.
+            controller.update(
+                policy: PowerFlowPolicyStore.current,
+                metrics: balancedSample,
+                userInitiated: true
+            )
+            AppLog.write(
+                "charging-limit probe done finalLimit=\(controller.snapshot.limitPercent.map(String.init) ?? "nil")"
+            )
+            NSApp.terminate(nil)
+        }
+    }
+
     private func renderPreview(_ view: NSView, name: String) {
         guard let representation = renderedBitmap(for: view) else {
             AppLog.write("preview \(name) failed: bitmap")
@@ -978,6 +1342,10 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
     }
 
     private func renderedBitmap(for view: NSView) -> NSBitmapImageRep? {
+        // NSStackView 等没有固定 frame 的视图，bounds 可能为 0，先给一个兜底布局尺寸。
+        if view.bounds.width <= 0 || view.bounds.height <= 0 {
+            view.frame = NSRect(x: 0, y: 0, width: 700, height: 30)
+        }
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
         guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
@@ -1057,6 +1425,26 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         renderPreview(view, name: name)
     }
 
+    /// `--render-main` 入口：渲染当前主层预览（含本地模型各状态）到 PNG 后退出。
+    /// 用于排查主层/本地模型显示问题，不跑完整 smoke 断言。
+    func runMainRender() {
+        AppLog.write("render-main start")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self else { return }
+            for state in ["idle", "recording", "thinking", "speaking"] {
+                self.localModelStatus = LocalModelStatus(state: state, message: state == "thinking" ? "本地思考" : "")
+                self.updateLocalModelButton(animated: false)
+                let view = self.makeMainContainer()
+                self.renderPreview(view, name: "main-local-\(state)")
+            }
+            self.localModelStatus = .idle
+            self.renderPreview(self.makeMainContainer(), name: "main-current")
+            AppLog.write("render-main done")
+            self.stop()
+            exit(EXIT_SUCCESS)
+        }
+    }
+
     private func makePowerFlowMaterialPreview(
         metrics: SystemMetrics,
         appearance: NSAppearance? = nil,
@@ -1090,55 +1478,62 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
     ) -> NSTouchBarItem? {
         didCreateVisibleItem = true
         AppLog.write("make item \(identifier.rawValue)")
+        // NSTouchBar delegate 契约：同一 identifier 必须返回稳定实例，绝不能每次新建。
+        if let cached = touchBarItems[identifier.rawValue] {
+            return cached
+        }
+        let item: NSTouchBarItem
         switch identifier {
         case Item.mainContainer:
-            let item = NSCustomTouchBarItem(identifier: identifier)
-            item.visibilityPriority = .high
-            item.view = makeMainContainer()
-            return item
+            let modal = NSCustomTouchBarItem(identifier: identifier)
+            modal.visibilityPriority = .high
+            modal.view = makeMainContainerItem()
+            item = modal
         case Item.detailContainer:
-            let item = NSCustomTouchBarItem(identifier: identifier)
-            item.visibilityPriority = .high
-            item.view = makeDetailContainer()
-            return item
+            let modal = NSCustomTouchBarItem(identifier: identifier)
+            modal.visibilityPriority = .high
+            modal.view = makeDetailContainer()
+            item = modal
         case Item.usageContainer:
-            let item = NSCustomTouchBarItem(identifier: identifier)
-            item.visibilityPriority = .high
-            item.view = makeUsageContainer()
-            return item
+            let modal = NSCustomTouchBarItem(identifier: identifier)
+            modal.visibilityPriority = .high
+            modal.view = makeUsageContainer()
+            item = modal
         case Item.systemContainer:
-            let item = NSCustomTouchBarItem(identifier: identifier)
-            item.visibilityPriority = .high
-            item.view = makeSystemContainer()
-            return item
+            let modal = NSCustomTouchBarItem(identifier: identifier)
+            modal.visibilityPriority = .high
+            modal.view = makeSystemContainer()
+            item = modal
         default:
             return nil
         }
+        touchBarItems[identifier.rawValue] = item
+        return item
     }
 
-    private func makeMainContainer() -> NSView {
-        // Keep the custom item near its real maximum content width. A 900 pt
-        // intrinsic width makes AppKit clip the item on Touch Bar models that
-        // reserve more room for the Control Strip.
-        let container = FixedTouchBarContainer(width: 400)
+    /// 主层单容器 item：内含 4 个模块按钮 + 各槽位的空槽占位，全部手动布局。
+    /// 整个主层作为一个 item 呈现，present 时只挂载一次，模块同时出现、无逐个挂载卡顿。
+    private func makeMainContainerItem() -> NSView {
+        let container = ModuleItemView(width: Self.fallbackModalWidth)
+        container.appearance = NSAppearance(named: .darkAqua)
+        mainContainerView = container
+        mainEmptySlotViews = [:]
 
         let sidecar = pillButton(
-            title: "随航 ⇄ 通用控制",
-            symbol: "ipad.and.iphone",
+            title: effectiveTitle(for: .sidecar) ?? "随航 ⇄ 通用控制",
+            symbol: storedIcon(for: .sidecar).isEmpty ? "ipad.and.iphone" : storedIcon(for: .sidecar),
             action: #selector(openSidecar),
             background: sidecarColor
         )
-        sidecar.frame = NSRect(x: 0, y: 0, width: configuredWidth(for: .sidecar), height: 30)
         sidecarButton = sidecar
         container.addSubview(sidecar)
 
         let aiCoding = pillButton(
-            title: "AI coding",
-            symbol: "curlybraces.square.fill",
+            title: effectiveTitle(for: .aiCoding) ?? "AI coding",
+            symbol: storedIcon(for: .aiCoding).isEmpty ? "curlybraces.square.fill" : storedIcon(for: .aiCoding),
             action: #selector(showDetails),
             background: NSColor(calibratedRed: 48 / 255, green: 66 / 255, blue: 120 / 255, alpha: 1)
         )
-        aiCoding.frame = NSRect(x: 186, y: 0, width: 92, height: 30)
         aiCodingButton = aiCoding
         container.addSubview(aiCoding)
 
@@ -1147,28 +1542,82 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             action: #selector(showSystemDetails),
             style: powerRunnerStyle
         )
-        systemMonitor.frame = NSRect(x: 0, y: 0, width: configuredWidth(for: .systemMonitor), height: 30)
         systemMonitor.toolTip = systemMonitorToolTip
         systemMonitorButton = systemMonitor
         container.addSubview(systemMonitor)
 
         let voice = pillButton(
-            title: "",
-            symbol: "waveform.circle.fill",
+            title: effectiveLocalModelTitle,
+            symbol: effectiveLocalModelSymbol,
             action: #selector(openVoiceAssistant),
             background: localModelColor
         )
-        voice.frame = NSRect(x: 0, y: 0, width: 44, height: 30)
         voice.toolTip = "本地模型语音助手"
         voiceButton = voice
         container.addSubview(voice)
 
-        updateVisibleStatus()
-        updateSidecarButton(animated: false)
-        updateLocalModelButton(animated: false)
-        updateSystemMonitor()
-        AppLog.write("main order=\(componentOrder.map(\.rawValue)) sidecar=\(sidecar.frame) ai=\(aiCoding.frame) system=\(systemMonitor.frame) voice=\(voice.frame)")
+        let effective = effectiveSlots
+        for index in 0..<MainComponent.slotCount where effective.indices.contains(index) && effective[index] == nil {
+            let empty = NSView()
+            mainEmptySlotViews[index] = empty
+            container.addSubview(empty)
+        }
+
+        updateMainModuleWidths()
         return container
+    }
+
+    /// 把模块按钮包进一个报告固定尺寸（宽×30）的透明容器，容器作为 item 视图。
+    /// 系统按 item 视图的 intrinsicContentSize 定尺寸、并会重设子视图 frame——直接把按钮
+    /// 当 item 视图（无论约束还是 frame）都会被系统改成 fitting 高度（19 或 40.5）再被
+    /// 30pt 窗口裁切，圆角被切掉后看起来就是方块。0.17 的容器 + intrinsic + 子按钮 frame
+    /// 从未被改动，因此正常；这里复刻同一机制。
+    private func makeTouchBarItemView(_ button: NSView, width: CGFloat) -> NSView {
+        button.frame = NSRect(x: 0, y: 0, width: width, height: 30)
+        let wrapper = ModuleItemView(width: width)
+        wrapper.appearance = NSAppearance(named: .darkAqua)
+        wrapper.addSubview(button)
+        return wrapper
+    }
+
+    /// 主层预览容器（供冒烟测试 renderPreview 渲染，生产主层用独立 item，不走这里）。
+    /// 按 componentSlots 顺序水平排布各模块按钮与空槽占位，仅用于渲染，不污染生产弱引用。
+    private func makeMainContainer() -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 6
+        for slot in componentSlots {
+            let view: NSView
+            let width: CGFloat
+            switch slot {
+            case .some(.sidecar):
+                view = pillButton(title: "随航 ⇄ 通用控制", symbol: "ipad.and.iphone", action: #selector(openSidecar), background: sidecarColor)
+                width = configuredWidth(for: .sidecar)
+            case .some(.aiCoding):
+                view = pillButton(title: "AI coding", symbol: "curlybraces.square.fill", action: #selector(showDetails), background: NSColor(calibratedRed: 48 / 255, green: 66 / 255, blue: 120 / 255, alpha: 1))
+                width = configuredWidth(for: .aiCoding)
+            case .some(.systemMonitor):
+                view = PowerRunnerButton(target: self, action: #selector(showSystemDetails), style: powerRunnerStyle)
+                width = configuredWidth(for: .systemMonitor)
+            case .some(.localModel):
+                let title = effectiveLocalModelTitle
+                view = pillButton(title: title, symbol: effectiveLocalModelSymbol, action: #selector(openVoiceAssistant), background: localModelColor)
+                (view as? NSButton)?.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
+                width = localModelWidth
+            case .none:
+                let empty = NSView()
+                empty.widthAnchor.constraint(equalToConstant: MainComponent.emptySlotWidth).isActive = true
+                empty.heightAnchor.constraint(equalToConstant: 30).isActive = true
+                stack.addArrangedSubview(empty)
+                continue
+            }
+            // 预览与生产 item 一致：统一宽度与 30 高，保证渲染比例真实。
+            view.widthAnchor.constraint(equalToConstant: width).isActive = true
+            view.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            stack.addArrangedSubview(view)
+        }
+        return stack
     }
 
     private func makeSystemContainer() -> NSView {
@@ -1202,7 +1651,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         backButton = back
         container.addSubview(back)
 
-        let quota = QuotaView(width: 455)
+        let quota = QuotaView(width: 665)
         quota.frame.origin = NSPoint(x: 40, y: 0)
         quota.update(with: snapshot.limits, platforms: snapshot.platforms, accounts: snapshot.accounts)
         quota.onOpenUsage = { [weak self] key in
@@ -1211,14 +1660,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         quotaView = quota
         container.addSubview(quota)
 
-        let sessions = SessionStripView(width: 220)
-        sessions.frame.origin = NSPoint(x: 503, y: 0)
-        sessions.onOpen = { [weak self] id in self?.openCodexThread(id) }
-        sessions.update(with: snapshot.activeThreads)
-        sessionView = sessions
-        container.addSubview(sessions)
-
-        AppLog.write("detail frames back=\(back.frame) quota=\(quota.frame) sessions=\(sessions.frame)")
+        AppLog.write("detail frames back=\(back.frame) quota=\(quota.frame)")
         return container
     }
 
@@ -1247,6 +1689,8 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         touchBar.defaultItemIdentifiers = mainIdentifiers
     }
 
+    /// 主层 = 单个容器 item（内含 4 模块 + 空槽，手动布局）。
+    /// 用单容器而非多独立 item：present 时只挂载 1 个 item，消除"逐个出现"的卡顿。
     private var mainIdentifiers: [NSTouchBarItem.Identifier] {
         [Item.mainContainer]
     }
@@ -1274,6 +1718,13 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         button.imagePosition = .imageOnly
         button.title = ""
         button.toolTip = "Bar Control"
+        rebuildMenu()
+    }
+
+    /// 重建菜单栏。四个模块分组按 Touch Bar 主层组件顺序（componentOrder）排列，
+    /// 因此移动 Touch Bar 组件顺序时菜单栏分组顺序会同步跟随。
+    private func rebuildMenu() {
+        runnerMenuItems = []
 
         let menu = NSMenu()
         menu.delegate = self
@@ -1284,52 +1735,98 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         powerItem.view = powerFlow
         menu.addItem(powerItem)
         menu.addItem(.separator())
-        menu.addItem(menuItem("显示主 Touch Bar", #selector(showMain)))
-        menu.addItem(menuItem("显示 Touch Bar 整机详情", #selector(showSystemDetails)))
-        let moreItem = NSMenuItem(title: "更多操作", action: nil, keyEquivalent: "")
-        let moreMenu = NSMenu(title: "更多操作")
-        moreMenu.addItem(menuItem("打开 AI coding 详情", #selector(showDetails)))
-        moreMenu.addItem(menuItem("打开随航", #selector(openSidecar)))
-        moreMenu.addItem(menuItem("打开语音助手", #selector(openVoiceAssistant)))
-        moreMenu.addItem(menuItem("远程 Codex 控制台…", #selector(showRemoteControl)))
-        moreMenu.addItem(menuItem("打开 Codex++ 管理工具", #selector(openCodexPlusPlusManager)))
-        moreMenu.addItem(menuItem("打开当前 Codex 会话", #selector(openLatestCodexThread)))
-        moreMenu.addItem(.separator())
-        let runnerItem = NSMenuItem(title: "Touch Bar 动图", action: nil, keyEquivalent: "")
-        let runnerMenu = NSMenu(title: "Touch Bar 动图")
-        runnerMenuItems = PowerRunnerStyle.allCases.enumerated().map { index, style in
-            let item = NSMenuItem(title: style.title, action: #selector(selectPowerRunnerStyle), keyEquivalent: "")
-            item.target = self
-            item.tag = index
-            runnerMenu.addItem(item)
-            return item
+
+        for component in componentOrder {
+            let item = NSMenuItem(title: component.title, action: nil, keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: component.symbol, accessibilityDescription: component.title)
+            item.submenu = makeModuleSubmenu(for: component)
+            menu.addItem(item)
         }
-        runnerItem.submenu = runnerMenu
-        moreMenu.addItem(runnerItem)
-        moreMenu.addItem(menuItem("自定义 Touch Bar 组件…", #selector(showComponentOrder)))
-        let borderItem = menuItem("显示按钮描边", #selector(togglePillBorders))
-        borderMenuItem = borderItem
-        moreMenu.addItem(borderItem)
+
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(title: "Touch Bar 设置", action: nil, keyEquivalent: "")
+        let settingsMenu = NSMenu(title: "Touch Bar 设置")
+        settingsMenu.addItem(menuItem("显示主 Touch Bar", #selector(showMain)))
+        settingsMenu.addItem(menuItem("自定义 Touch Bar 组件…", #selector(showComponentOrder)))
+        let persistentItem = menuItem("在触控栏常驻显示模块", #selector(togglePersistentModules))
+        persistentMenuItem = persistentItem
+        settingsMenu.addItem(persistentItem)
         let brightnessItem = menuItem("Touch Bar 保持最亮", #selector(toggleTouchBarMaximumBrightness))
         brightnessMenuItem = brightnessItem
-        moreMenu.addItem(brightnessItem)
-        moreItem.submenu = moreMenu
-        menu.addItem(moreItem)
+        settingsMenu.addItem(brightnessItem)
+        settingsItem.submenu = settingsMenu
+        menu.addItem(settingsItem)
+
         menu.addItem(menuItem("退出 Bar Control", #selector(quit)))
         statusItem.menu = menu
-        updateBorderMenuItem()
+        updatePersistentMenuItem()
         updateBrightnessMenuItem()
         updateRunnerMenuItems()
         updateVisibleStatus()
     }
 
+    /// 按 Touch Bar 模块生成对应的二级菜单，命令按模块语义归类。
+    private func makeModuleSubmenu(for component: MainComponent) -> NSMenu {
+        let submenu = NSMenu(title: component.title)
+        switch component {
+        case .sidecar:
+            submenu.addItem(menuItem("切换随航", #selector(openSidecar)))
+            submenu.addItem(menuItem("随航环境修复", #selector(sidecarEnvironmentFix)))
+            submenu.addItem(menuItem("控制环境修复", #selector(controlEnvironmentFix)))
+        case .aiCoding:
+            submenu.addItem(menuItem("打开 AI coding 详情", #selector(showDetails)))
+            // AI Coding 显示：勾选展示哪些软件、哪些供应商（展开时按快照动态刷新）。
+            let displayMenu = NSMenu(title: "AI Coding 显示")
+            displayMenu.delegate = self
+            aiDisplayMenu = displayMenu
+            rebuildAIDisplayMenu(displayMenu)
+            let displayItem = NSMenuItem(title: "AI Coding 显示", action: nil, keyEquivalent: "")
+            displayItem.submenu = displayMenu
+            submenu.addItem(displayItem)
+        case .localModel:
+            submenu.addItem(menuItem("打开语音助手", #selector(openVoiceAssistant)))
+        case .systemMonitor:
+            submenu.addItem(menuItem("显示 Touch Bar 整机详情", #selector(showSystemDetails)))
+            let runnerItem = NSMenuItem(title: "Touch Bar 动图", action: nil, keyEquivalent: "")
+            let runnerMenu = NSMenu(title: "Touch Bar 动图")
+            runnerMenuItems = PowerRunnerStyle.allCases.enumerated().map { index, style in
+                let item = NSMenuItem(title: style.title, action: #selector(selectPowerRunnerStyle), keyEquivalent: "")
+                item.target = self
+                item.tag = index
+                runnerMenu.addItem(item)
+                return item
+            }
+            runnerItem.submenu = runnerMenu
+            submenu.addItem(runnerItem)
+        }
+        return submenu
+    }
+
+    /// 子菜单展开时按最新快照刷新「AI Coding 显示」内容。
+    /// 用内容指纹守卫：内容没变（例如刚切换了某个勾选）绝不重建，避免菜单在展开中被清空退出。
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === aiDisplayMenu else { return }
+        let key = (snapshot.accounts ?? []).map { "\($0.clientID)/\($0.key)" }.joined(separator: "|")
+        guard key != aiDisplayMenuKey else { return }
+        rebuildAIDisplayMenu(menu)
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
+        if menu === aiDisplayMenu { aiDisplayMenuOpen = true }
         refreshSystemMetrics()
         powerFlowView?.startAnimating()
         AppLog.write("power flow animation=start")
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        if menu === aiDisplayMenu {
+            aiDisplayMenuOpen = false
+            if pendingAIQuotaRefresh {
+                pendingAIQuotaRefresh = false
+                quotaView?.update(with: snapshot.limits, platforms: snapshot.platforms, accounts: snapshot.accounts)
+            }
+        }
         powerFlowView?.stopAnimating()
         AppLog.write("power flow animation=stop")
     }
@@ -1380,6 +1877,21 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             updateSystemMonitor()
             powerFlowView?.metrics = next
             systemDetailView?.metrics = next
+            // Auto rules only run after the panel has claimed the limit, so
+            // an externally configured limit is never overwritten silently.
+            ChargingLimitController.shared.update(
+                policy: PowerFlowPolicyStore.current,
+                metrics: next,
+                userInitiated: false
+            )
+            AdapterDischargeController.shared.maintainSafety(
+                policy: PowerFlowPolicyStore.current,
+                metrics: next
+            )
+            AdapterDischargeController.shared.applyStandingPolicyIfNeeded(
+                policy: PowerFlowPolicyStore.current,
+                metrics: next
+            )
             let metricsKey = systemMonitorToolTip
             if lastLoggedMetrics.isEmpty {
                 let adapter = next.adapterLimitWatts.map { String(format: "%.1f", $0) } ?? "--"
@@ -1396,7 +1908,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         guard let button = systemMonitorButton else { return }
         button.watts = systemMetrics.systemWatts ?? systemMetrics.sourceWatts
         button.toolTip = systemMonitorToolTip
-        layoutMainButtons(animated: false)
+        updateMainModuleWidths()
     }
 
     private var systemMonitorToolTip: String {
@@ -1413,19 +1925,18 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
     private func updateVisibleStatus() {
         let color = stateColor
         if let aiCodingButton {
-            setVisibleTitle(aiCodingButton, text: "AI coding")
+            let aiTitle = effectiveTitle(for: .aiCoding) ?? "AI coding"
+            setVisibleTitle(aiCodingButton, text: aiTitle)
             aiCodingButton.contentTintColor = color
         }
         controlStripButton?.contentTintColor = color
         quotaView?.update(with: snapshot.limits, platforms: snapshot.platforms, accounts: snapshot.accounts)
-        sessionView?.update(with: snapshot.activeThreads)
         if let selectedUsageAccountKey {
             usageDetailView?.usage = snapshot.accounts?.first { $0.key == selectedUsageAccountKey }
         }
         updateSidecarButton(animated: true)
 
         statusItem.button?.toolTip = "AI coding · \(snapshot.label)"
-        statusMenuHeader?.title = "AI coding · \(snapshot.label)"
 
         let statusKey = "\(snapshot.state):\(snapshot.activeCount):\(snapshot.label)"
         if statusKey != lastLoggedStatus {
@@ -1507,16 +2018,15 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
 
     private func updateLocalModelButton(animated: Bool) {
         guard let voiceButton else { return }
-        let presentation = localModelPresentation
-        setVisibleTitle(voiceButton, text: presentation.title)
-        voiceButton.image = NSImage(systemSymbolName: presentation.symbol, accessibilityDescription: "本地模型")
-        voiceButton.image = voiceButton.image?.withSymbolConfiguration(
-            NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-        )
-        voiceButton.imagePosition = presentation.title.isEmpty ? .imageOnly : .imageLeading
+        let title = effectiveLocalModelTitle
+        let symbol = effectiveLocalModelSymbol
+        setVisibleTitle(voiceButton, text: title)
+        // 与其他胶囊模块一致：使用默认符号渲染，不做单独的字号/字重配置。
+        voiceButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "本地模型")
+        voiceButton.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
         voiceButton.layer?.backgroundColor = localModelColor.cgColor
-        voiceButton.toolTip = presentation.title.isEmpty ? "本地模型语音助手" : "本地模型 · \(presentation.title)"
-        layoutMainButtons(animated: animated)
+        voiceButton.toolTip = title.isEmpty ? "本地模型语音助手" : "本地模型 · \(title)"
+        updateMainModuleWidths()
     }
 
     private var sidecarTitle: String {
@@ -1527,7 +2037,9 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             return "\(frames[sidecarFrame % frames.count]) \(sidecarStatus.message)\(suffix)"
         case "success": return "✓ \(sidecarStatus.message)\(suffix)"
         case "failure": return "✕ \(sidecarStatus.message)\(suffix)"
-        default: return "随航 ⇄ 通用控制"
+        default:
+            if let override = effectiveTitle(for: .sidecar) { return override }
+            return "随航 ⇄ 通用控制"
         }
     }
 
@@ -1547,7 +2059,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         let title = sidecarTitle
         setVisibleTitle(sidecarButton, text: title)
         sidecarButton.layer?.backgroundColor = sidecarColor.cgColor
-        layoutMainButtons(animated: animated)
+        updateMainModuleWidths()
     }
 
     private var sidecarWidth: CGFloat {
@@ -1562,8 +2074,9 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
 
     private var localModelWidth: CGFloat {
         let configured = configuredWidth(for: .localModel)
-        guard !localModelPresentation.title.isEmpty else { return configured }
-        return max(configured, pillWidth(title: localModelPresentation.title, button: voiceButton, min: 82, max: 82, iconOnly: 36))
+        let title = effectiveLocalModelTitle
+        guard !title.isEmpty else { return configured }
+        return max(configured, pillWidth(title: title, button: voiceButton, min: 82, max: 82, iconOnly: 36))
     }
 
     private func configuredWidth(for component: MainComponent) -> CGFloat {
@@ -1577,36 +2090,91 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         return Swift.min(max, Swift.max(min, textWidth + 56))
     }
 
-    private func layoutMainButtons(animated: Bool) {
-        var x: CGFloat = 0
-        var frames: [(NSButton, NSRect)] = []
-        for component in componentOrder {
-            let entry: (NSButton?, CGFloat)
-            switch component {
-            case .sidecar: entry = (sidecarButton, sidecarWidth)
-            case .aiCoding: entry = (aiCodingButton, aiCodingWidth)
-            case .systemMonitor: entry = (systemMonitorButton, configuredWidth(for: .systemMonitor))
-            case .localModel: entry = (voiceButton, localModelWidth)
-            }
-            guard let button = entry.0 else { continue }
-            let visible = componentVisibility[component] ?? true
-            button.isHidden = !visible
-            guard visible else { continue }
-            frames.append((button, NSRect(x: x, y: 0, width: entry.1, height: 30)))
-            x += entry.1 + 6
-        }
+    /// 更新主层每个模块 item view 的宽度约束。
+    /// 模块是独立 NSTouchBarItem，宽度由 widthAnchor 约束决定（系统按 defaultItemIdentifiers
+    /// 顺序排布、空槽位用空占位 item 占位）；这里只更新各模块当前应显示的宽度。
+    private func updateMainModuleWidths() {
+        layoutMainButtons()
+    }
 
-        guard animated else {
-            frames.forEach { $0.0.frame = $0.1 }
-            return
+    /// 主层单容器内的布局：4 模块 + 空槽按槽位顺序水平排布，空槽平摊剩余空间。
+    /// 首槽贴左、末槽贴右；所有子视图一次性设 frame，无独立 item 挂载，无卡顿。
+    private func layoutMainButtons() {
+        guard let container = mainContainerView else { return }
+        let slots = effectiveSlots
+        var widths: [CGFloat] = []
+        for slot in slots {
+            if let component = slot {
+                switch component {
+                case .sidecar: widths.append(sidecarWidth)
+                case .aiCoding: widths.append(aiCodingWidth)
+                case .systemMonitor: widths.append(configuredWidth(for: .systemMonitor))
+                case .localModel: widths.append(localModelWidth)
+                }
+            } else {
+                widths.append(MainComponent.emptySlotWidth)
+            }
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            frames.forEach { $0.0.animator().frame = $0.1 }
+        let gap: CGFloat = Self.modalItemGap
+        // item 容器被系统放在窗口关闭钮区之后（容器原点≈窗口 x64），容器右侧超出窗口
+        // 的不可见。因此模块从容器内 0 起排，铺到「窗口宽 - 关闭钮区(64) - 右留白(8)」
+        // 即容器内 0..692 → 屏幕 64..756，末槽恰好贴触控栏右缘。
+        let availableWidth = (container.window?.frame.width ?? Self.fallbackModalWidth)
+            - Self.modalLeadingOffset - Self.modalRightMargin
+        let contentWidth = max(100, availableWidth)
+        let natural = widths.reduce(0, +) + gap * CGFloat(max(0, slots.count - 1))
+        let emptyCount = slots.filter { $0 == nil }.count
+        let share = emptyCount > 0 ? max(0, contentWidth - natural) / CGFloat(emptyCount) : 0
+
+        var x: CGFloat = 0
+        for (index, slot) in slots.enumerated() {
+            var w = widths[index]
+            if slot == nil {
+                w = MainComponent.emptySlotWidth + share
+                mainEmptySlotViews[index]?.frame = NSRect(x: x, y: 0, width: w, height: 30)
+            } else {
+                switch slot! {
+                case .sidecar: sidecarButton?.frame = NSRect(x: x, y: 0, width: w, height: 30)
+                case .aiCoding: aiCodingButton?.frame = NSRect(x: x, y: 0, width: w, height: 30)
+                case .systemMonitor: systemMonitorButton?.frame = NSRect(x: x, y: 0, width: w, height: 30)
+                case .localModel: voiceButton?.frame = NSRect(x: x, y: 0, width: w, height: 30)
+                }
+            }
+            x += w + gap
+        }
+        // 防溢出：若内容超出可用宽（极端情况），按比例压缩空槽，保证末槽不出屏。
+        if x - gap > contentWidth, emptyCount > 0 {
+            let overflow = x - gap - contentWidth
+            let perEmpty = overflow / CGFloat(emptyCount)
+            var shrinkX: CGFloat = 0
+            for (index, slot) in slots.enumerated() {
+                let w = widths[index] + (slot == nil ? share - perEmpty : 0)
+                if slot == nil {
+                    mainEmptySlotViews[index]?.frame = NSRect(x: shrinkX, y: 0, width: w, height: 30)
+                } else {
+                    switch slot! {
+                    case .sidecar: sidecarButton?.frame = NSRect(x: shrinkX, y: 0, width: w, height: 30)
+                    case .aiCoding: aiCodingButton?.frame = NSRect(x: shrinkX, y: 0, width: w, height: 30)
+                    case .systemMonitor: systemMonitorButton?.frame = NSRect(x: shrinkX, y: 0, width: w, height: 30)
+                    case .localModel: voiceButton?.frame = NSRect(x: shrinkX, y: 0, width: w, height: 30)
+                    }
+                }
+                shrinkX += w + gap
+            }
+        }
+        // 隐藏未安装对应软件（不在有效槽位）的模块按钮。
+        let active = Set(slots.compactMap { $0 })
+        let allModules: [(MainComponent, NSView?)] = [
+            (.sidecar, sidecarButton), (.aiCoding, aiCodingButton),
+            (.systemMonitor, systemMonitorButton), (.localModel, voiceButton)
+        ]
+        for (component, button) in allModules {
+            button?.isHidden = !active.contains(component)
         }
     }
 
+    /// 把剩余空间平摊给所有空槽：首槽贴左、末槽贴右，模块停留在各自槽位的比例位置上。
+    /// 这是槽位的绝对网格语义——空槽越多的区段空隙越大，模块不会被整体推走。
     private func pillButton(
         title: String,
         symbol: String,
@@ -1640,8 +2208,21 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         button.layer?.borderColor = showPillBorders ? NSColor.white.withAlphaComponent(0.38).cgColor : nil
     }
 
-    private func updateBorderMenuItem() {
-        borderMenuItem?.state = showPillBorders ? .on : .off
+    private func updatePersistentMenuItem() {
+        persistentMenuItem?.state = persistentModules ? .on : .off
+    }
+
+    /// 切换常驻模式：开启时以无关闭钮的系统模态长驻中间区域，关闭时撤下模块栏。
+    @objc private func togglePersistentModules() {
+        persistentModules.toggle()
+        UserDefaults.standard.set(persistentModules, forKey: DefaultsKey.persistentModules)
+        if persistentModules {
+            showMain()
+        } else {
+            ControlStrip.dismiss(touchBar)
+        }
+        updatePersistentMenuItem()
+        AppLog.write("persistent modules=\(persistentModules)")
     }
 
     private func updateBrightnessMenuItem() {
@@ -1699,16 +2280,41 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
 
     @objc private func showSystemDetails() {
         AppLog.write("show system detail")
-        refreshSystemMetrics()
+        // metrics 每秒由计时器刷新；这里不再额外触发，避免切换瞬间与重排竞争。
         touchBar.principalItemIdentifier = nil
-        touchBar.defaultItemIdentifiers = systemIdentifiers
+        if touchBar.defaultItemIdentifiers != systemIdentifiers {
+            touchBar.defaultItemIdentifiers = systemIdentifiers
+        }
         presentTouchBar()
+        // 详情视图已绑定 systemDetailView.metrics；切换后立即用最新采样刷一次。
+        systemDetailView?.metrics = systemMetrics
     }
 
     @objc private func showMain() {
         touchBar.principalItemIdentifier = nil
-        touchBar.defaultItemIdentifiers = mainIdentifiers
+        // 已是主层标识时跳过重设，避免触发系统逐项重排（重新唤出时模块分批出现的卡顿）。
+        if touchBar.defaultItemIdentifiers != mainIdentifiers {
+            touchBar.defaultItemIdentifiers = mainIdentifiers
+        }
         presentTouchBar()
+    }
+
+    private var lastPresentedAt = Date.distantPast
+
+    /// 常驻自愈：期望显示主层但模块已消失（窗口丢失/按钮无 window）时重新呈现。
+    private func dfrSelfHealIfNeeded() {
+        guard persistentModules,
+              touchBar.defaultItemIdentifiers == mainIdentifiers else { return }
+        // 主层至少有一个按钮应挂在窗口上；全 nil 说明模态丢了。
+        let anyWindowed = [sidecarButton, aiCodingButton, systemMonitorButton, voiceButton]
+            .compactMap { $0?.window }
+        if anyWindowed.isEmpty {
+            AppLog.write("dfr self-heal: main layer vanished, re-presenting")
+            ControlStrip.dismiss(touchBar)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.showMain()
+            }
+        }
     }
 
     private func presentTouchBar() {
@@ -1717,7 +2323,29 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             return
         }
         AppLog.write("ensure DFR visible=\(touchBarPower.ensureVisible())")
-        AppLog.write("present modal=\(ControlStrip.present(touchBar, from: Item.controlStrip)) ids=\(touchBar.defaultItemIdentifiers.map(\.rawValue))")
+        // 反复 present 同一 touchBar 而不 dismiss 会让 DFR 模态状态错乱，
+        // 表现为“只剩左 X / 整条消失”。这里在再次呈现前先退掉旧模态。
+        if Date().timeIntervalSince(lastPresentedAt) < 2.0 {
+            ControlStrip.dismiss(touchBar)
+        }
+        lastPresentedAt = Date()
+        // 常驻模式关闭系统关闭钮：模块栏长驻中间区域、无 X。
+        AppLog.write("present modal=\(ControlStrip.present(touchBar, from: Item.controlStrip, showsCloseBox: !persistentModules)) ids=\(touchBar.defaultItemIdentifiers.map(\.rawValue))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self else { return }
+            // 窗口挂载后按真实宽度重算布局（容器内手动排布）。
+            self.updateMainModuleWidths()
+            let coords: [(String, NSButton?)] = [
+                ("sidecar", self.sidecarButton), ("ai", self.aiCodingButton),
+                ("sys", self.systemMonitorButton), ("voice", self.voiceButton)
+            ]
+            let parts = coords.map { name, button -> String in
+                guard let button else { return "\(name)=nil" }
+                let windowPoint = button.convert(button.bounds, to: nil)
+                return "\(name)=x\(Int(windowPoint.origin.x)) w\(Int(windowPoint.width))"
+            }
+            AppLog.write("coords \(parts.joined(separator: " ")) win=\(String(describing: self.sidecarButton?.window?.frame))")
+        }
         guard keepTouchBarMaximumBrightness else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.maintainTouchBarBrightness()
@@ -1749,6 +2377,16 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         }
     }
 
+    /// 随航环境修复：动作待定义（用户提供具体修复命令后接入）。
+    @objc private func sidecarEnvironmentFix() {
+        AppLog.write("sidecar environment fix triggered (action pending definition)")
+    }
+
+    /// 控制环境修复：动作待定义（用户提供具体修复命令后接入）。
+    @objc private func controlEnvironmentFix() {
+        AppLog.write("control environment fix triggered (action pending definition)")
+    }
+
     @objc private func openVoiceAssistant() {
         let url = URL(fileURLWithPath: "/Applications/本地模型.app")
         let configuration = NSWorkspace.OpenConfiguration()
@@ -1760,15 +2398,10 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         }
     }
 
-    @objc private func openCodexPlusPlusManager() {
-        openApplication(path: "/Applications/Codex++ 管理工具.app")
-    }
-
     @objc private func togglePillBorders() {
         showPillBorders.toggle()
         UserDefaults.standard.set(showPillBorders, forKey: DefaultsKey.showPillBorders)
         [sidecarButton, aiCodingButton, voiceButton].forEach(applyPillBorder)
-        updateBorderMenuItem()
         AppLog.write("pill borders=\(showPillBorders)")
     }
 
@@ -1799,10 +2432,101 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         }
     }
 
+    /// 「AI Coding 显示」菜单内容：勾选展示哪些软件、哪些供应商。
+    /// 行使用自定义视图内嵌勾选按钮——普通菜单项点击后系统必然关闭菜单，视图菜单项不会。
+    /// 默认勾选 = 有当前在用账号/供应商的；未使用的软件、非当前的供应商默认不勾选。
+    private func rebuildAIDisplayMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        defer {
+            aiDisplayMenuKey = (snapshot.accounts ?? []).map { "\($0.clientID)/\($0.key)" }.joined(separator: "|")
+        }
+        let platformOverrides = UserDefaults.standard.dictionary(forKey: "aiCodingPlatformOverrides.v1") as? [String: Bool] ?? [:]
+        let providerOverrides = UserDefaults.standard.dictionary(forKey: "aiCodingProviderOverrides.v1") as? [String: Bool] ?? [:]
+        let accounts = snapshot.accounts ?? []
+        var clientOrder: [String] = []
+        for account in accounts where !clientOrder.contains(account.clientID) {
+            clientOrder.append(account.clientID)
+        }
+        guard !clientOrder.isEmpty else {
+            let hint = NSMenuItem(title: "尚未检测到 AI 软件数据", action: nil, keyEquivalent: "")
+            hint.isEnabled = false
+            menu.addItem(hint)
+            return
+        }
+        for clientID in clientOrder {
+            let group = accounts.filter { $0.clientID == clientID }
+            guard let first = group.first else { continue }
+            let hasCurrent = group.contains(where: \.isCurrent)
+            let shown = platformOverrides[clientID] ?? hasCurrent
+            menu.addItem(makeAIRow(
+                title: first.clientLabel,
+                checked: shown,
+                identifier: clientID,
+                action: #selector(toggleAIPlatformVisible(_:)),
+                indent: false
+            ))
+            for usage in group {
+                let providerShown = providerOverrides[usage.key] ?? usage.isCurrent
+                menu.addItem(makeAIRow(
+                    title: "· \(usage.accountLabel)",
+                    checked: providerShown,
+                    identifier: usage.key,
+                    action: #selector(toggleAIProviderVisible(_:)),
+                    indent: true
+                ))
+            }
+        }
+    }
+
+    /// 菜单项行（自定义视图）：点击勾选不会关闭菜单。
+    private func makeAIRow(title: String, checked: Bool, identifier: String, action: Selector, indent: Bool) -> NSMenuItem {
+        let row = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        let label = NSTextField(labelWithString: title)
+        label.frame = NSRect(x: indent ? 26 : 10, y: 4, width: 216, height: 16)
+        label.font = indent ? .systemFont(ofSize: 12) : .systemFont(ofSize: 13, weight: .medium)
+        label.textColor = indent ? .secondaryLabelColor : .labelColor
+        row.addSubview(label)
+        let check = NSButton(checkboxWithTitle: "", target: self, action: action)
+        check.identifier = NSUserInterfaceItemIdentifier(identifier)
+        check.state = checked ? .on : .off
+        check.frame = NSRect(x: 252, y: 1, width: 22, height: 22)
+        row.addSubview(check)
+        let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        item.view = row
+        return item
+    }
+
+    @objc private func toggleAIPlatformVisible(_ sender: NSButton) {
+        guard let clientID = sender.identifier?.rawValue else { return }
+        var overrides = UserDefaults.standard.dictionary(forKey: "aiCodingPlatformOverrides.v1") as? [String: Bool] ?? [:]
+        overrides[clientID] = sender.state == .on
+        UserDefaults.standard.set(overrides, forKey: "aiCodingPlatformOverrides.v1")
+        refreshAIQuotaAfterToggle()
+        AppLog.write("ai coding platform \(clientID) shown=\(sender.state == .on)")
+    }
+
+    @objc private func toggleAIProviderVisible(_ sender: NSButton) {
+        guard let key = sender.identifier?.rawValue else { return }
+        var overrides = UserDefaults.standard.dictionary(forKey: "aiCodingProviderOverrides.v1") as? [String: Bool] ?? [:]
+        overrides[key] = sender.state == .on
+        UserDefaults.standard.set(overrides, forKey: "aiCodingProviderOverrides.v1")
+        refreshAIQuotaAfterToggle()
+        AppLog.write("ai coding provider \(key) shown=\(sender.state == .on)")
+    }
+
+    /// 勾选后刷新触控栏；若 AI 菜单正展开则延迟到菜单关闭，保证菜单不退出。
+    private func refreshAIQuotaAfterToggle() {
+        if aiDisplayMenuOpen {
+            pendingAIQuotaRefresh = true
+            return
+        }
+        quotaView?.update(with: snapshot.limits, platforms: snapshot.platforms, accounts: snapshot.accounts)
+    }
+
     @objc private func showComponentOrder() {
         if orderPanel == nil {
             let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 362),
+                contentRect: NSRect(x: 0, y: 0, width: 620, height: 680),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
@@ -1810,21 +2534,56 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             panel.title = "自定义 Touch Bar 组件"
             panel.isReleasedWhenClosed = false
             panel.level = .floating
+            panel.delegate = self
 
             let content = NSView(frame: panel.contentView?.bounds ?? .zero)
+            // 跟随系统深/浅色外观：不强制 appearance，所有语义色（windowBackground/
+            // labelColor/secondaryLabelColor）自动适配深浅模式。
             content.wantsLayer = true
             content.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-            let title = NSTextField(labelWithString: "主层组件")
-            title.frame = NSRect(x: 20, y: 316, width: 520, height: 24)
+            let isDark = content.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+
+            let title = NSTextField(labelWithString: "Touch Bar 预览")
+            title.frame = NSRect(x: 20, y: 640, width: 300, height: 24)
             title.font = .systemFont(ofSize: 17, weight: .semibold)
             content.addSubview(title)
 
-            let subtitle = NSTextField(labelWithString: "开关控制显示；拖动滑杆改变宽度；箭头调整位置，修改会立即生效。")
-            subtitle.frame = NSRect(x: 20, y: 291, width: 520, height: 20)
+            let borderCheck = NSButton(checkboxWithTitle: "按钮描边", target: self, action: #selector(togglePillBorders))
+            borderCheck.state = showPillBorders ? .on : .off
+            borderCheck.frame = NSRect(x: 480, y: 640, width: 120, height: 24)
+            content.addSubview(borderCheck)
+
+            let subtitle = NSTextField(labelWithString: "点击下方一个槽位，选择把哪个模块放进去，或清空该位。格子宽度按模块设置比例铺满，空槽位吃掉剩余空间。")
+            subtitle.frame = NSRect(x: 20, y: 615, width: 580, height: 20)
             subtitle.textColor = .secondaryLabelColor
             content.addSubview(subtitle)
 
-            let stack = NSStackView(frame: NSRect(x: 20, y: 61, width: 520, height: 220))
+            // Touch Bar 预览条：胶囊底随系统深浅（深色近黑/浅色浅灰）+ 6 个可点击格子。
+            let preview = NSView(frame: NSRect(x: 20, y: 555, width: 580, height: 40))
+            preview.wantsLayer = true
+            preview.layer?.backgroundColor = (isDark
+                ? NSColor(calibratedWhite: 0.10, alpha: 1)
+                : NSColor(calibratedWhite: 0.88, alpha: 1)
+            ).cgColor
+            preview.layer?.cornerRadius = 10
+            preview.layer?.masksToBounds = true
+            content.addSubview(preview)
+            let previewStack = NSStackView()
+            previewStack.orientation = .horizontal
+            previewStack.alignment = .centerY
+            previewStack.spacing = 6
+            previewStack.distribution = .fill
+            previewStack.frame = NSRect(x: 6, y: 5, width: 568, height: 30)
+            preview.addSubview(previewStack)
+            slotPreviewStack = previewStack
+            slotPreviewButtons = []
+
+            let moduleTitle = NSTextField(labelWithString: "已放置模块")
+            moduleTitle.frame = NSRect(x: 20, y: 523, width: 560, height: 20)
+            moduleTitle.font = .systemFont(ofSize: 14, weight: .semibold)
+            content.addSubview(moduleTitle)
+
+            let stack = NSStackView(frame: NSRect(x: 20, y: 295, width: 580, height: 220))
             stack.orientation = .vertical
             stack.alignment = .width
             stack.distribution = .fillEqually
@@ -1832,18 +2591,318 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             orderStack = stack
             content.addSubview(stack)
 
+            let iconTitle = NSTextField(labelWithString: "模块图标与文字")
+            iconTitle.frame = NSRect(x: 20, y: 263, width: 560, height: 20)
+            iconTitle.font = .systemFont(ofSize: 14, weight: .semibold)
+            content.addSubview(iconTitle)
+
+            let iconHint = NSTextField(labelWithString: "图标可选「模块默认图标」或任意 SF Symbol；文字可选「模块默认名称」「无（纯图标）」「自定义文字」。")
+            iconHint.frame = NSRect(x: 20, y: 243, width: 580, height: 18)
+            iconHint.font = .systemFont(ofSize: 11)
+            iconHint.textColor = .secondaryLabelColor
+            content.addSubview(iconHint)
+
+            let customStackView = NSStackView(frame: NSRect(x: 20, y: 75, width: 580, height: 160))
+            customStackView.orientation = .vertical
+            customStackView.alignment = .width
+            customStackView.distribution = .fillEqually
+            customStackView.spacing = 7
+            customStack = customStackView
+            content.addSubview(customStackView)
+
             let reset = NSButton(title: "恢复默认布局", target: self, action: #selector(resetComponentOrder))
-            reset.frame = NSRect(x: 20, y: 17, width: 116, height: 28)
+            reset.frame = NSRect(x: 20, y: 30, width: 116, height: 28)
             reset.bezelStyle = .rounded
             content.addSubview(reset)
 
             panel.contentView = content
             orderPanel = panel
         }
+        reloadSlotPreview()
         reloadOrderRows()
+        reloadCustomRows()
+        // 打开设置面板会让 App 变前台，系统可能重置 DFR 模态；先主动收走，
+        // 关闭面板时（windowWillClose）再恢复主层，避免“看面板没改就消失”。
+        if persistentModules {
+            ControlStrip.dismiss(touchBar)
+        }
         orderPanel?.center()
         orderPanel?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        // 面板关闭后恢复常驻主层（若之前在主层/常驻开启）。
+        if persistentModules {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.showMain()
+            }
+        }
+    }
+
+    /// 「模块图标与文字」区：每个可定制模块一行——图标下拉（SF Symbol）+ 文字输入。
+    private func reloadCustomRows() {
+        guard let customStack else { return }
+        for view in customStack.arrangedSubviews {
+            customStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for component in [MainComponent.sidecar, .aiCoding, .localModel] where component.isSoftwareAvailable {
+            let row = NSView(frame: NSRect(x: 0, y: 0, width: 580, height: 49))
+            row.wantsLayer = true
+            row.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            row.layer?.cornerRadius = 7
+
+            let iconView = NSImageView(frame: NSRect(x: 12, y: 15, width: 19, height: 19))
+            iconView.image = NSImage(systemSymbolName: component.symbol, accessibilityDescription: component.title)
+            iconView.contentTintColor = .labelColor
+            row.addSubview(iconView)
+
+            let nameLabel = NSTextField(labelWithString: component.title)
+            nameLabel.frame = NSRect(x: 38, y: 14, width: 96, height: 20)
+            nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
+            row.addSubview(nameLabel)
+
+            // 图标：默认图标 + SF Symbol 清单（菜单项直接显示图标本身）。
+            let popup = NSPopUpButton(frame: NSRect(x: 138, y: 9, width: 150, height: 28))
+            popup.identifier = NSUserInterfaceItemIdentifier(component.rawValue)
+            let defaultIconItem = NSMenuItem(title: "模块默认图标", action: nil, keyEquivalent: "")
+            defaultIconItem.representedObject = ""
+            popup.menu?.addItem(defaultIconItem)
+            var names = Self.symbolChoices
+            let builtIn = component.symbol
+            if !names.contains(builtIn) { names.insert(builtIn, at: 0) }
+            let current = storedIcon(for: component)
+            if !current.isEmpty && !names.contains(current) { names.append(current) }
+            for name in names {
+                let item = NSMenuItem(title: name, action: nil, keyEquivalent: "")
+                item.representedObject = name
+                item.image = NSImage(systemSymbolName: name, accessibilityDescription: name)
+                popup.menu?.addItem(item)
+            }
+            popup.selectItem(at: current.isEmpty ? 0 : ((names.firstIndex(of: current) ?? -1) + 1))
+            popup.target = self
+            popup.action = #selector(changeModuleIcon)
+            popup.toolTip = "选择 \(component.title) 的图标（SF Symbol）"
+            row.addSubview(popup)
+
+            // 文字三选一：模块默认名称 / 无（纯图标）/ 自定义文字。
+            let mode = storedTextMode(for: component)
+            let textPopup = NSPopUpButton(frame: NSRect(x: 294, y: 9, width: 122, height: 28))
+            textPopup.identifier = NSUserInterfaceItemIdentifier(component.rawValue)
+            for (title, rawValue) in [("模块默认名称", ModuleTextMode.defaultName), ("无", ModuleTextMode.none), ("自定义文字", ModuleTextMode.custom)] {
+                let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                item.representedObject = rawValue.rawValue
+                textPopup.menu?.addItem(item)
+            }
+            textPopup.selectItem(at: [ModuleTextMode.defaultName, .none, .custom].firstIndex(of: mode) ?? 0)
+            textPopup.target = self
+            textPopup.action = #selector(changeModuleTextMode)
+            textPopup.toolTip = "选择 \(component.title) 的文字显示方式"
+            row.addSubview(textPopup)
+
+            let field = NSTextField(frame: NSRect(x: 424, y: 11, width: 144, height: 24))
+            field.identifier = NSUserInterfaceItemIdentifier(component.rawValue)
+            field.placeholderString = "输入文字"
+            field.stringValue = storedLabel(for: component)
+            field.isEnabled = mode == .custom
+            field.target = self
+            field.action = #selector(changeModuleLabel)
+            field.toolTip = "自定义文字（选择「自定义文字」后可用）"
+            row.addSubview(field)
+
+            customStack.addArrangedSubview(row)
+        }
+
+    }
+
+    @objc private func changeModuleIcon(_ sender: NSPopUpButton) {
+        guard let raw = sender.identifier?.rawValue,
+              let component = MainComponent(rawValue: raw),
+              let name = sender.selectedItem?.representedObject as? String else { return }
+        UserDefaults.standard.set(name, forKey: Self.moduleIconPrefix + component.rawValue)
+        refreshModuleAppearance()
+    }
+
+    @objc private func changeModuleTextMode(_ sender: NSPopUpButton) {
+        guard let raw = sender.identifier?.rawValue,
+              let component = MainComponent(rawValue: raw),
+              let mode = sender.selectedItem?.representedObject as? String else { return }
+        UserDefaults.standard.set(mode, forKey: Self.moduleTextModePrefix + component.rawValue)
+        reloadCustomRows()
+        refreshModuleAppearance()
+    }
+
+    @objc private func changeModuleLabel(_ sender: NSTextField) {
+        guard let raw = sender.identifier?.rawValue,
+              let component = MainComponent(rawValue: raw) else { return }
+        let label = sender.stringValue.trimmingCharacters(in: .whitespaces)
+        UserDefaults.standard.set(label, forKey: Self.moduleLabelPrefix + component.rawValue)
+        refreshModuleAppearance()
+    }
+
+    /// 把当前存储的自定义图标/文字立即套用到已存在的按钮上。
+    private func refreshModuleAppearance() {
+        if let button = sidecarButton {
+            let icon = storedIcon(for: .sidecar).isEmpty ? "ipad.and.iphone" : storedIcon(for: .sidecar)
+            button.image = NSImage(systemSymbolName: icon, accessibilityDescription: button.title) ?? button.image
+        }
+        if let button = aiCodingButton {
+            let icon = storedIcon(for: .aiCoding).isEmpty ? "curlybraces.square.fill" : storedIcon(for: .aiCoding)
+            button.image = NSImage(systemSymbolName: icon, accessibilityDescription: button.title) ?? button.image
+            let label = storedLabel(for: .aiCoding)
+            setVisibleTitle(button, text: label.isEmpty ? "AI coding" : label)
+        }
+        updateSidecarButton(animated: false)
+        updateLocalModelButton(animated: false)
+        updateMainModuleWidths()
+    }
+
+    /// 渲染 Touch Bar 预览条的 6 个槽位格子。每个格子是一个按钮：
+    /// 有模块则显示图标+短名，空槽位显示虚线框 + "空"；点击弹出槽位选择菜单。
+    /// 布局直接镜像实体条：相同的起始偏移(64)、间距(8)、弹性占位（最后模块前、推到最右），
+    /// 整条按比例缩放到预览宽度——保证预览与实际位置一致。
+    private func reloadSlotPreview() {
+        guard let previewContainer = slotPreviewStack?.superview else { return }
+        let isDark = previewContainer.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        for button in slotPreviewButtons {
+            button.removeFromSuperview()
+        }
+        slotPreviewButtons = []
+
+        // 各槽位真实渲染宽（与 layoutMainButtons 同源）：模块用动态宽，空槽位 48。
+        let slots = effectiveSlots
+        var slotWidths: [CGFloat] = []
+        var lastModuleIndex = -1
+        for (index, slot) in slots.enumerated() {
+            if let component = slot {
+                let width: CGFloat
+                switch component {
+                case .sidecar: width = sidecarWidth
+                case .aiCoding: width = aiCodingWidth
+                case .systemMonitor: width = configuredWidth(for: .systemMonitor)
+                case .localModel: width = localModelWidth
+                }
+                slotWidths.append(width)
+                lastModuleIndex = index
+            } else {
+                slotWidths.append(MainComponent.emptySlotWidth)
+            }
+        }
+        guard lastModuleIndex >= 0 else { return }
+        // 与 layoutMainButtons 同公式：剩余空间平摊给空槽，模块停留在槽位的比例位置。
+        let natural = Self.modalLeadingOffset
+            + slotWidths.reduce(0, +)
+            + Self.modalItemGap * CGFloat(max(0, slots.count - 1))
+        let available = Self.fallbackModalWidth - Self.modalRightMargin
+        let emptyCount = componentSlots.filter { $0 == nil }.count
+        let share = emptyCount > 0 ? max(0, available - natural) / CGFloat(emptyCount) : 0
+        var realWidths = slotWidths
+        for (index, slot) in componentSlots.enumerated() where slot == nil {
+            realWidths[index] = MainComponent.emptySlotWidth + share
+        }
+
+        // 实体条 756pt → 预览条内容宽（左右各留 6pt），按比例缩放摆放。
+        let scale = (previewContainer.bounds.width - 12) / Self.fallbackModalWidth
+        let scaledGap = Self.modalItemGap * scale
+        var x = Self.modalLeadingOffset * scale + 6
+
+        func placeSlot(_ slotIndex: Int, realWidth: CGFloat) {
+            let slot = slots[slotIndex]
+            let buttonWidth = realWidth * scale
+            let slotButton = NSButton()
+            slotButton.imagePosition = .imageLeading
+            slotButton.isBordered = false
+            slotButton.font = .systemFont(ofSize: 11, weight: .medium)
+            slotButton.tag = slotIndex
+            slotButton.target = self
+            slotButton.action = #selector(slotMenuAction)
+            slotButton.wantsLayer = true
+            slotButton.layer?.cornerRadius = 6
+            if isDark {
+                // 深色预览条：格子深底浅字
+                if let component = slot {
+                    let icon = NSImage(systemSymbolName: component.symbol, accessibilityDescription: component.title)
+                    let image = icon?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .medium))
+                    slotButton.image = image
+                    slotButton.title = component.shortTitle
+                    slotButton.contentTintColor = .white
+                    slotButton.layer?.backgroundColor = NSColor(calibratedWhite: 0.32, alpha: 1).cgColor
+                } else {
+                    slotButton.title = "空"
+                    slotButton.contentTintColor = NSColor(calibratedWhite: 0.75, alpha: 1)
+                    slotButton.layer?.borderWidth = 1
+                    slotButton.layer?.borderColor = NSColor(calibratedWhite: 0.5, alpha: 1).cgColor
+                    slotButton.layer?.backgroundColor = NSColor(calibratedWhite: 0.18, alpha: 1).cgColor
+                }
+            } else {
+                // 浅色预览条：格子浅底深字，保证对比
+                if let component = slot {
+                    let icon = NSImage(systemSymbolName: component.symbol, accessibilityDescription: component.title)
+                    let image = icon?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .medium))
+                    slotButton.image = image
+                    slotButton.title = component.shortTitle
+                    slotButton.contentTintColor = .black
+                    slotButton.layer?.backgroundColor = NSColor(calibratedWhite: 0.62, alpha: 1).cgColor
+                } else {
+                    slotButton.title = "空"
+                    slotButton.contentTintColor = NSColor(calibratedWhite: 0.35, alpha: 1)
+                    slotButton.layer?.borderWidth = 1
+                    slotButton.layer?.borderColor = NSColor(calibratedWhite: 0.55, alpha: 1).cgColor
+                    slotButton.layer?.backgroundColor = NSColor(calibratedWhite: 0.78, alpha: 1).cgColor
+                }
+            }
+            slotButton.frame = NSRect(x: x, y: 5, width: buttonWidth, height: 30)
+            previewContainer.addSubview(slotButton)
+            slotPreviewButtons.append(slotButton)
+            x += buttonWidth + scaledGap
+        }
+
+        for index in 0..<slots.count {
+            placeSlot(index, realWidth: realWidths[index])
+        }
+    }
+
+    /// 点击预览槽位：弹出菜单列出四个模块 + 清空此位，选择后更新槽位并重排。
+    @objc private func slotMenuAction(_ sender: NSButton) {
+        let slotIndex = sender.tag
+        guard componentSlots.indices.contains(slotIndex) else { return }
+        let menu = NSMenu(title: "槽位 \(slotIndex + 1)")
+        for component in MainComponent.allCases where component.isSoftwareAvailable {
+            let isOccupied = componentSlots.contains(component) && componentSlots[slotIndex] != component
+            let title = isOccupied ? "(已占用) " : ""
+            let item = NSMenuItem(title: title + component.title, action: #selector(assignComponentToSlot), keyEquivalent: "")
+            item.target = self
+            item.tag = slotIndex
+            item.representedObject = component.rawValue as NSString
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let clear = NSMenuItem(title: "清空此位", action: #selector(clearComponentSlot), keyEquivalent: "")
+        clear.target = self
+        clear.tag = slotIndex
+        menu.addItem(clear)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
+    }
+
+    @objc private func assignComponentToSlot(_ sender: NSMenuItem) {
+        let slotIndex = sender.tag
+        guard componentSlots.indices.contains(slotIndex),
+              let raw = sender.representedObject as? String,
+              let component = MainComponent(rawValue: raw) else { return }
+        // 若该模块已在别处，先移除，保证一个模块只占一位。
+        if let existing = componentSlots.firstIndex(of: component), existing != slotIndex {
+            componentSlots[existing] = nil
+        }
+        componentSlots[slotIndex] = component
+        applyComponentSettings(reloadRows: true)
+    }
+
+    @objc private func clearComponentSlot(_ sender: NSMenuItem) {
+        let slotIndex = sender.tag
+        guard componentSlots.indices.contains(slotIndex) else { return }
+        componentSlots[slotIndex] = nil
+        applyComponentSettings(reloadRows: true)
     }
 
     private func reloadOrderRows() {
@@ -1852,26 +2911,34 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
             orderStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        for (index, component) in componentOrder.enumerated() {
+        let placed = componentOrder
+        if placed.isEmpty {
+            let empty = NSTextField(labelWithString: "尚未放置任何模块，请在上方点击槽位选择。")
+            empty.textColor = .secondaryLabelColor
+            empty.font = .systemFont(ofSize: 13)
+            empty.frame = NSRect(x: 0, y: 0, width: 520, height: 40)
+            orderStack.addArrangedSubview(empty)
+            return
+        }
+        for (index, component) in placed.enumerated() {
             let row = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 49))
             row.wantsLayer = true
             row.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
             row.layer?.cornerRadius = 7
 
-            let visible = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleComponentVisibility))
-            visible.frame = NSRect(x: 8, y: 11, width: 24, height: 24)
-            visible.state = (componentVisibility[component] ?? true) ? .on : .off
-            visible.tag = index
-            visible.toolTip = "显示或隐藏 \(component.title)"
-            row.addSubview(visible)
+            let slotTag = NSTextField(labelWithString: "槽 \(componentIndex(for: component) + 1)")
+            slotTag.frame = NSRect(x: 8, y: 14, width: 36, height: 20)
+            slotTag.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+            slotTag.textColor = .secondaryLabelColor
+            row.addSubview(slotTag)
 
-            let icon = NSImageView(frame: NSRect(x: 38, y: 14, width: 19, height: 19))
+            let icon = NSImageView(frame: NSRect(x: 48, y: 14, width: 19, height: 19))
             icon.image = NSImage(systemSymbolName: component.symbol, accessibilityDescription: component.title)
             icon.contentTintColor = .labelColor
             row.addSubview(icon)
 
             let label = NSTextField(labelWithString: component.title)
-            label.frame = NSRect(x: 66, y: 14, width: 116, height: 20)
+            label.frame = NSRect(x: 76, y: 14, width: 116, height: 20)
             label.font = .systemFont(ofSize: 13, weight: .medium)
             row.addSubview(label)
 
@@ -1884,7 +2951,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
                 target: self,
                 action: #selector(changeComponentWidth)
             )
-            slider.frame = NSRect(x: 184, y: 10, width: 177, height: 26)
+            slider.frame = NSRect(x: 200, y: 10, width: 177, height: 26)
             slider.isContinuous = true
             slider.tag = index
             slider.toolTip = "\(component.title) 宽度"
@@ -1892,48 +2959,19 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
 
             let widthLabel = NSTextField(labelWithString: "\(Int(width)) pt")
             widthLabel.identifier = NSUserInterfaceItemIdentifier("width.\(component.rawValue)")
-            widthLabel.frame = NSRect(x: 366, y: 14, width: 54, height: 20)
+            widthLabel.frame = NSRect(x: 384, y: 14, width: 54, height: 20)
             widthLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
             widthLabel.textColor = .secondaryLabelColor
             widthLabel.alignment = .right
             row.addSubview(widthLabel)
 
-            let up = iconButton(symbol: "chevron.up", description: "上移", action: #selector(moveComponentUp))
-            up.frame = NSRect(x: 450, y: 9, width: 28, height: 28)
-            up.isBordered = true
-            up.bezelStyle = .texturedRounded
-            up.contentTintColor = .labelColor
-            up.tag = index
-            up.isEnabled = index > 0
-            row.addSubview(up)
-
-            let down = iconButton(symbol: "chevron.down", description: "下移", action: #selector(moveComponentDown))
-            down.frame = NSRect(x: 482, y: 9, width: 28, height: 28)
-            down.isBordered = true
-            down.bezelStyle = .texturedRounded
-            down.contentTintColor = .labelColor
-            down.tag = index
-            down.isEnabled = index < componentOrder.count - 1
-            row.addSubview(down)
             orderStack.addArrangedSubview(row)
         }
     }
 
-    @objc private func moveComponentUp(_ sender: NSButton) {
-        moveComponent(at: sender.tag, by: -1)
-    }
-
-    @objc private func moveComponentDown(_ sender: NSButton) {
-        moveComponent(at: sender.tag, by: 1)
-    }
-
-    @objc private func toggleComponentVisibility(_ sender: NSButton) {
-        guard componentOrder.indices.contains(sender.tag) else { return }
-        let component = componentOrder[sender.tag]
-        let visible = sender.state == .on
-        componentVisibility[component] = visible
-        UserDefaults.standard.set(visible, forKey: MainComponent.visibilityPrefix + component.rawValue)
-        applyComponentSettings(reloadRows: false)
+    /// 返回组件当前所在的槽位下标；不在任何槽位时返回 0（防御）。
+    private func componentIndex(for component: MainComponent) -> Int {
+        componentSlots.firstIndex(of: component) ?? 0
     }
 
     @objc private func changeComponentWidth(_ sender: NSSlider) {
@@ -1951,47 +2989,33 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate {
         applyComponentSettings(reloadRows: false)
     }
 
-    private func moveComponent(at index: Int, by offset: Int) {
-        let destination = index + offset
-        guard componentOrder.indices.contains(index), componentOrder.indices.contains(destination) else { return }
-        componentOrder.swapAt(index, destination)
-        applyComponentSettings(reloadRows: true)
-    }
-
     @objc private func resetComponentOrder() {
-        componentOrder = MainComponent.allCases
-        componentVisibility = Dictionary(uniqueKeysWithValues: MainComponent.allCases.map { ($0, true) })
+        // 默认：可用模块依次放入前几槽，未安装软件的模块不放入，其余槽留空。
+        componentSlots = Array<MainComponent?>(MainComponent.allCases.filter { $0.isSoftwareAvailable })
+        while componentSlots.count < MainComponent.slotCount {
+            componentSlots.append(nil)
+        }
         componentWidths = Dictionary(uniqueKeysWithValues: MainComponent.allCases.map { ($0, $0.defaultWidth) })
         for component in MainComponent.allCases {
-            UserDefaults.standard.set(true, forKey: MainComponent.visibilityPrefix + component.rawValue)
             UserDefaults.standard.set(Double(component.defaultWidth), forKey: MainComponent.widthPrefix + component.rawValue)
         }
         applyComponentSettings(reloadRows: true)
     }
 
     private func applyComponentSettings(reloadRows: Bool) {
-        MainComponent.saveOrder(componentOrder)
-        if reloadRows { reloadOrderRows() }
-        updateSystemMonitor()
-        layoutMainButtons(animated: true)
-        AppLog.write("component settings order=\(componentOrder.map(\.rawValue)) visible=\(componentVisibility) widths=\(componentWidths)")
-    }
-
-    @objc private func openLatestCodexThread() {
-        if let id = snapshot.activeThreads.first?.id {
-            openCodexThread(id)
-        } else {
-            openApplication(path: "/Applications/ChatGPT.app")
+        MainComponent.saveSlots(componentSlots)
+        if reloadRows {
+            reloadSlotPreview()
+            reloadOrderRows()
         }
-    }
-
-    @objc private func showRemoteControl() {
-        remoteControl.showWindow()
-    }
-
-    private func openCodexThread(_ id: String) {
-        guard let url = URL(string: "codex://threads/\(id)") else { return }
-        NSWorkspace.shared.open(url)
+        // 更新各模块 item 的宽度（systemMonitor 内容 + 宽度一起刷新）。
+        updateSystemMonitor()
+        // 关键：只改 defaultItemIdentifiers，让系统按新槽位顺序/显隐自动重排。
+        // 绝不重建 item（makeItemForIdentifier 已缓存同一实例）、绝不做帧动画、
+        // 绝不反复 present——否则会走 NSTouchBar delegate、中断模态并让 Control Strip 图标消失。
+        touchBar.defaultItemIdentifiers = mainIdentifiers
+        rebuildMenu()
+        AppLog.write("component settings slots=\(componentSlots.map { $0?.rawValue ?? "~" }) widths=\(componentWidths)")
     }
 
     private func openApplication(path: String) {
@@ -2034,8 +3058,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.runGreenFlowAnimationVariantPreviews()
         } else if CommandLine.arguments.contains("--power-telemetry-probe") {
             controller.runLivePowerTelemetryProbe()
+        } else if CommandLine.arguments.contains("--charging-limit-probe") {
+            controller.runChargingLimitProbe()
         } else if CommandLine.arguments.contains("--style-previews") {
             controller.runStylePreviews()
+        } else if CommandLine.arguments.contains("--render-main") {
+            controller.runMainRender()
         }
     }
 
@@ -2044,6 +3072,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AdapterDischargeController.shared.restoreSynchronously()
         controller?.stop()
     }
 

@@ -9,15 +9,44 @@ enum FlowAnimationStyle: String, CaseIterable {
     case silkRibbon = "silk-ribbon"
 }
 
+enum PowerFlowPolicy: Int, CaseIterable, Sendable {
+    case charging = 0
+    case balanced = 1
+    case discharging = 2
+
+    var title: String {
+        switch self {
+        case .charging: "优先充电"
+        case .balanced: "负载均衡"
+        case .discharging: "优先放电"
+        }
+    }
+
+    func resolved(macBatteryPercent: Int?, externalBatteryPercent: Int?) -> PowerFlowPolicy {
+        guard self == .balanced else { return self }
+        // A low Mac battery always wins. If Mac is known to be healthy, an
+        // external device below 20% becomes the next priority.
+        if let macBatteryPercent, macBatteryPercent < 20 { return .charging }
+        if let macBatteryPercent,
+           macBatteryPercent >= 20,
+           let externalBatteryPercent,
+           externalBatteryPercent < 20 {
+            return .discharging
+        }
+        return .balanced
+    }
+}
+
 /// Menu-sized composition that keeps the approved flow geometry intact and
 /// adds a synchronized accounting strip underneath it.
 @MainActor
 final class PowerFlowPanelView: NSView {
     private enum Layout {
-        static let footerHeight: CGFloat = 88
+        static let footerHeight: CGFloat = 126
         static let horizontalInset: CGFloat = 8.5
         static let chipGap: CGFloat = 8
         static let chipHeight: CGFloat = 26
+        static let policyBottom: CGFloat = 94
         static let primaryChipBottom: CGFloat = 57
         static let temperatureChipBottom: CGFloat = 27
         static let captionBottom: CGFloat = 5
@@ -43,6 +72,26 @@ final class PowerFlowPanelView: NSView {
     )
     private let sourceLabel = NSTextField(labelWithString: "")
     private let negotiationLabel = NSTextField(labelWithString: "USB-C 自动协商")
+    private let policyLabel = NSTextField(labelWithString: "供电偏好")
+    private let policyControl = NSSegmentedControl(
+        labels: PowerFlowPolicy.allCases.map(\.title),
+        trackingMode: .selectOne,
+        target: nil,
+        action: nil
+    )
+    private let policyGlassView: NSView
+
+    private var powerFlowPolicy: PowerFlowPolicy {
+        get { PowerFlowPolicyStore.current }
+        set { PowerFlowPolicyStore.current = newValue }
+    }
+
+    private var resolvedPowerFlowPolicy: PowerFlowPolicy {
+        powerFlowPolicy.resolved(
+            macBatteryPercent: metrics.batteryPercent,
+            externalBatteryPercent: metrics.externalBatteryPercent
+        )
+    }
 
     var metrics = SystemMetrics.unavailable {
         didSet {
@@ -55,6 +104,26 @@ final class PowerFlowPanelView: NSView {
     var isAnimating: Bool { flowView.isAnimating }
 
     init() {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.style = .regular
+            glass.cornerRadius = 10
+            if #available(macOS 27.0, *) {
+                glass.effectIsInteractive = true
+            }
+            glass.contentView = policyControl
+            policyGlassView = glass
+        } else {
+            let fallback = NSVisualEffectView()
+            fallback.material = .popover
+            fallback.blendingMode = .withinWindow
+            fallback.state = .active
+            fallback.wantsLayer = true
+            fallback.layer?.cornerRadius = 10
+            fallback.layer?.cornerCurve = .continuous
+            fallback.addSubview(policyControl)
+            policyGlassView = fallback
+        }
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -67,7 +136,23 @@ final class PowerFlowPanelView: NSView {
         negotiationLabel.font = .systemFont(ofSize: 10, weight: .semibold)
         negotiationLabel.textColor = .secondaryLabelColor
         negotiationLabel.alignment = .right
-        negotiationLabel.lineBreakMode = .byClipping
+        negotiationLabel.lineBreakMode = .byTruncatingTail
+
+        policyLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        policyLabel.textColor = .secondaryLabelColor
+        policyLabel.stringValue = "Mac 供电"
+        policyLabel.lineBreakMode = .byTruncatingTail
+        policyLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        policyControl.segmentStyle = .rounded
+        policyControl.controlSize = .small
+        policyControl.selectedSegment = powerFlowPolicy.rawValue
+        policyControl.target = self
+        policyControl.action = #selector(powerFlowPolicyChanged(_:))
+        policyControl.setAccessibilityLabel("Mac 供电策略")
+        policyControl.setAccessibilityHelp(
+            "选择 Mac 端供电策略；「优先充电」放开系统充电上限，「负载均衡/优先放电」把系统充电上限压到 80% 让外接设备优先取电"
+        )
 
         addSubview(flowView)
         addSubview(localChip)
@@ -77,6 +162,8 @@ final class PowerFlowPanelView: NSView {
         addSubview(gpuTemperatureChip)
         addSubview(sourceLabel)
         addSubview(negotiationLabel)
+        addSubview(policyLabel)
+        addSubview(policyGlassView)
         updateSummary()
         updateLayoutSize()
 
@@ -153,6 +240,20 @@ final class PowerFlowPanelView: NSView {
             width: max(0, bounds.width - 252 - Layout.horizontalInset - 2),
             height: 16
         )
+        policyLabel.frame = NSRect(
+            x: Layout.horizontalInset + 3,
+            y: Layout.policyBottom + 5,
+            width: 116,
+            height: 16
+        )
+        policyGlassView.frame = NSRect(
+            x: policyLabel.frame.maxX + 8,
+            y: Layout.policyBottom,
+            width: max(0, bounds.width - policyLabel.frame.maxX - Layout.horizontalInset - 8),
+            height: Layout.chipHeight
+        )
+        policyControl.frame = policyGlassView.bounds.insetBy(dx: 2, dy: 1)
+        policyControl.autoresizingMask = [.width, .height]
     }
 
     func startAnimating() {
@@ -193,10 +294,60 @@ final class PowerFlowPanelView: NSView {
         gpuTemperatureChip.title = "GPU"
         gpuTemperatureChip.value = Self.temperature(metrics.gpuTemperature)
         sourceLabel.stringValue = sourceDescription
-        negotiationLabel.stringValue = "USB-C 自动协商"
-        setAccessibilityValue(
-            "本机实际 \(localChip.value)，外接设备 \(externalChip.value)，风扇\(fanSummary.accessibility)，电池温度 \(batteryTemperatureChip.value)，GPU 温度 \(gpuTemperatureChip.value)，\(sourceDescription)，USB-C 自动协商"
+        let adapter = AdapterDischargeController.shared
+        policyLabel.stringValue = "Mac 供电 · " + (adapter.isCut
+            ? "放电中"
+            : ChargingLimitController.shared.summaryText)
+        negotiationLabel.stringValue = powerPolicySummary
+        setAccessibilityValue("本机实际 \(localChip.value)，外接设备 \(externalChip.value)，风扇\(fanSummary.accessibility)，电池温度 \(batteryTemperatureChip.value)，GPU 温度 \(gpuTemperatureChip.value)，\(sourceDescription)，Mac 电量 \(batteryPercentText(metrics.batteryPercent))，外接设备电量 \(batteryPercentText(metrics.externalBatteryPercent))，策略 \(powerFlowPolicy.title)，当前 \(resolvedPowerFlowPolicy.title)，\(ChargingLimitController.shared.accessibilityText)")
+    }
+
+    @objc private func powerFlowPolicyChanged(_ sender: NSSegmentedControl) {
+        guard let selection = PowerFlowPolicy(rawValue: sender.selectedSegment) else { return }
+        powerFlowPolicy = selection
+        applySelectedPolicy()
+        updateSummary()
+    }
+
+    /// Applies the current selection to the system levers. The panel is the
+    /// only user-facing switch for these, so a fresh selection always claims
+    /// control; balanced/charging additionally reconnects the charger.
+    func applySelectedPolicy() {
+        ChargingLimitController.shared.update(
+            policy: powerFlowPolicy,
+            metrics: metrics,
+            userInitiated: true
         )
+        AdapterDischargeController.shared.handlePolicySelection(powerFlowPolicy)
+    }
+
+    private var powerPolicySummary: String {
+        let selected = powerFlowPolicy
+        if selected == .discharging {
+            let adapter = AdapterDischargeController.shared
+            if !adapter.helperInstalled {
+                return "未安装放电组件"
+            }
+            if let error = adapter.lastError {
+                return error
+            }
+            return adapter.isCut ? "已断充电器 · 优先外接设备" : "Mac · 优先放电"
+        }
+        if selected == .balanced {
+            if let macBatteryPercent = metrics.batteryPercent,
+               macBatteryPercent < 20 {
+                return "自动 · 当前优先充电"
+            }
+            if metrics.batteryPercent != nil, metrics.externalBatteryPercent != nil {
+                return "自动 · 当前\(resolvedPowerFlowPolicy.title)"
+            }
+            return "自动 · 等待外接电量"
+        }
+        return "Mac · \(selected.title)"
+    }
+
+    private func batteryPercentText(_ value: Int?) -> String {
+        value.map { "\($0)%" } ?? "未知"
     }
 
     private var sourceDescription: String {

@@ -694,6 +694,108 @@ int bcpt_read_fan_rpms(double *rpms, int capacity) {
     return count;
 }
 
+static bool bcpt_smc_write(
+    io_connect_t connection,
+    const char key[4],
+    const uint8_t *bytes,
+    uint32_t size
+) {
+    if (connection == IO_OBJECT_NULL || key == NULL || bytes == NULL
+        || size == 0 || size > 32) {
+        return false;
+    }
+    BCPTSMCKeyData input;
+    BCPTSMCKeyData output;
+    memset(&input, 0, sizeof(input));
+    memset(&output, 0, sizeof(output));
+    input.key = bcpt_smc_code(key);
+    input.command = 9;
+    size_t output_size = sizeof(output);
+    kern_return_t result = IOConnectCallStructMethod(
+        connection,
+        2,
+        &input,
+        sizeof(input),
+        &output,
+        &output_size
+    );
+    if (result != KERN_SUCCESS || output.result != 0) {
+        return false;
+    }
+    input.key_info = output.key_info;
+    memcpy(input.bytes, bytes, size);
+    input.command = 6;
+    memset(&output, 0, sizeof(output));
+    output_size = sizeof(output);
+    result = IOConnectCallStructMethod(
+        connection,
+        2,
+        &input,
+        sizeof(input),
+        &output,
+        &output_size
+    );
+    if (result != KERN_SUCCESS) {
+        return false;
+    }
+    return output.result == 0;
+}
+
+static io_connect_t bcpt_open_smc(void) {
+    io_service_t service = IOServiceGetMatchingService(
+        kIOMainPortDefault,
+        IOServiceMatching("AppleSMC")
+    );
+    if (service == IO_OBJECT_NULL) {
+        return IO_OBJECT_NULL;
+    }
+    io_connect_t connection = IO_OBJECT_NULL;
+    kern_return_t open_result = IOServiceOpen(
+        service,
+        mach_task_self(),
+        0,
+        &connection
+    );
+    IOObjectRelease(service);
+    if (open_result != KERN_SUCCESS) {
+        return IO_OBJECT_NULL;
+    }
+    return connection;
+}
+
+// The adapter cut lives on the CHIE key: 0x08 disconnects the charger even
+// while it stays plugged in, 0x00 reconnects it. Reads work for any user;
+// writes historically require root, and firmware 20457+ may refuse them
+// entirely, so every write is verified by a read-back at the call site.
+int bcpt_adapter_control_read(uint8_t *raw_out) {
+    io_connect_t connection = bcpt_open_smc();
+    if (connection == IO_OBJECT_NULL) {
+        return 0;
+    }
+    BCPTSMCKeyData value;
+    int success = 0;
+    if (bcpt_smc_read(connection, "CHIE", &value)
+        && value.key_info.data_size >= 1) {
+        if (raw_out != NULL) {
+            *raw_out = value.bytes[0];
+        }
+        success = 1;
+    }
+    IOServiceClose(connection);
+    return success;
+}
+
+int bcpt_adapter_control_set(uint8_t raw) {
+    io_connect_t connection = bcpt_open_smc();
+    if (connection == IO_OBJECT_NULL) {
+        return 0;
+    }
+    uint8_t byte = raw;
+    int success = bcpt_smc_write(connection, "CHIE", &byte, 1) ? 1 : 0;
+    IOServiceClose(connection);
+    return success;
+}
+
 static bool bcpt_prepare_gpu_temperature_client(void) {
     if (bcpt_gpu_temperature_client != NULL) {
         return true;

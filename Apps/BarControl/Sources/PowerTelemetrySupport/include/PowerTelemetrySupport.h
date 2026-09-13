@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,6 +40,23 @@ int bcpt_read_fan_rpms(double *rpms, int capacity);
 /// Reads the average of the live GPU temperature sensors exposed through the
 /// read-only Apple HID temperature service. Returns 1 when available.
 int bcpt_read_gpu_temperature(double *celsius);
+
+/// macOS 26+ Manual Charge Limit through the private PowerUI framework.
+/// `bcpt_charge_limit_supported` returns 1 when this Mac exposes it.
+/// `bcpt_charge_limit_read` returns 1 with the active percentage written to
+/// `limit_out`, 0 when no limit is active, or -1 when unavailable.
+/// `bcpt_charge_limit_set` enables the limit at `percent` and returns 1 on
+/// success. All calls are synchronous and safe to run off the main thread.
+int bcpt_charge_limit_supported(void);
+int bcpt_charge_limit_read(int *limit_out);
+int bcpt_charge_limit_set(int percent);
+
+/// Adapter cut over the AppleSMC CHIE key (0x08 = charger disconnected,
+/// 0x00 = reconnected). `bcpt_adapter_control_read` works for any user and
+/// returns 1 on success; `bcpt_adapter_control_set` needs root and returns
+/// 1 only when the SMC accepted the write.
+int bcpt_adapter_control_read(uint8_t *raw_out);
+int bcpt_adapter_control_set(uint8_t raw);
 
 #ifdef __cplusplus
 }
