@@ -1,0 +1,13 @@
+# AI助手保留的实验性直连配置。
+# 使用：先设置 DEEPSEEK_API_KEY，再运行 `codex --profile codex-direct`。
+# 这份配置不接 4230；工具调用是否完整取决于上游是否兼容 Responses API。
+model_provider = "deepseek_direct"
+model = "deepseek-flash"
+model_catalog_json = "__DIRECT_CATALOG__"
+
+[model_providers.deepseek_direct]
+name = "DeepSeek · 直连（实验）"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+requires_openai_auth = false
+env_key = "DEEPSEEK_API_KEY"

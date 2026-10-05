@@ -1,19 +1,10 @@
 {
-  "name": "Codex CLI",
-  "executable": "/usr/bin/env",
-  "arguments": [
-    "codex",
-    "--search",
-    "exec",
-    "--ephemeral",
-    "--sandbox",
-    "read-only",
-    "--skip-git-repo-check",
-    "--color",
-    "never",
-    "-C",
-    "/private/tmp",
-    "-"
-  ],
-  "timeout_seconds": 240
+    "name": "统一 Agent 路由（DSH / Codex / 第三方中转站）",
+    "executable": "/usr/bin/python3",
+    "arguments": [
+        "/Users/mac/Library/Application Support/LocalSiriLLM/unified_router.py",
+        "--agent",
+        "default"
+    ],
+    "timeout_seconds": 240
 }

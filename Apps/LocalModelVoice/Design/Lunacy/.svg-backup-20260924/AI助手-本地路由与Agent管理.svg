@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6C63FF"/><stop offset="1" stop-color="#4F8CFF"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#1D2B55" flood-opacity=".08"/></filter>
+  </defs>
+  <rect width="1440" height="900" fill="#F5F7FB"/>
+  <rect width="224" height="900" fill="#FFFFFF"/>
+  <line x1="224" y1="0" x2="224" y2="900" stroke="#E7EAF2"/>
+  <g font-family="SF Pro Display, PingFang SC, Helvetica, sans-serif" fill="#17233F">
+    <rect x="24" y="24" width="176" height="56" rx="16" fill="url(#brand)"/>
+    <circle cx="54" cy="52" r="15" fill="#FFFFFF" opacity=".95"/>
+    <path d="M48 52h12M54 46v12" stroke="#5B6CFB" stroke-width="3" stroke-linecap="round"/>
+    <text x="80" y="50" fill="#FFFFFF" font-size="18" font-weight="700">AI助手</text>
+    <text x="80" y="67" fill="#E8ECFF" font-size="11">本地 AI 中枢</text>
+    <g font-size="14">
+      <rect x="18" y="116" width="188" height="48" rx="12" fill="#EEF1FF"/>
+      <circle cx="43" cy="140" r="8" fill="#6376FF"/><text x="64" y="145" font-weight="700">总览</text>
+      <circle cx="43" cy="198" r="8" fill="#A8B0C4"/><text x="64" y="203" fill="#667085">语音助手</text>
+      <rect x="18" y="224" width="188" height="48" rx="12" fill="#EEF1FF"/>
+      <circle cx="43" cy="248" r="8" fill="#6376FF"/><text x="64" y="253" font-weight="700">本地路由</text>
+      <circle cx="43" cy="306" r="8" fill="#A8B0C4"/><text x="64" y="311" fill="#667085">Agent 管理</text>
+      <circle cx="43" cy="364" r="8" fill="#A8B0C4"/><text x="64" y="369" fill="#667085">Jev 档位</text>
+      <circle cx="43" cy="422" r="8" fill="#A8B0C4"/><text x="64" y="427" fill="#667085">设置与状态</text>
+    </g>
+    <rect x="24" y="790" width="176" height="74" rx="14" fill="#F7F8FC" stroke="#E7EAF2"/>
+    <circle cx="48" cy="817" r="7" fill="#39C98A"/><text x="66" y="821" font-size="12" font-weight="700">系统在线</text>
+    <text x="40" y="845" font-size="11" fill="#8B94A8">关闭窗口不会退出 App</text>
+
+    <text x="264" y="62" font-size="26" font-weight="800">本地路由与 Agent 管理</text>
+    <text x="264" y="88" font-size="13" fill="#7A8499">供应商只配置一次，模型从模型池加入不同 Agent；URL、Key 与健康状态统一同步。</text>
+    <rect x="1160" y="38" width="108" height="36" rx="10" fill="#FFFFFF" stroke="#E1E5EF"/><text x="1190" y="61" font-size="12">刷新数据</text>
+    <circle cx="1306" cy="56" r="18" fill="#EEF1FF"/><text x="1300" y="62" font-size="16" fill="#6376FF">⚙</text>
+
+    <g filter="url(#shadow)">
+      <rect x="264" y="116" width="250" height="110" rx="16" fill="#FFFFFF"/>
+      <rect x="532" y="116" width="250" height="110" rx="16" fill="#FFFFFF"/>
+      <rect x="800" y="116" width="250" height="110" rx="16" fill="#FFFFFF"/>
+      <rect x="1068" y="116" width="200" height="110" rx="16" fill="#FFFFFF"/>
+    </g>
+    <g font-size="12" fill="#7A8499"><text x="288" y="145">已接入供应商</text><text x="556" y="145">当前在线</text><text x="824" y="145">本地模型池</text><text x="1092" y="145">平均延迟</text></g>
+    <g font-size="30" font-weight="800"><text x="288" y="184">8</text><text x="556" y="184">6 / 8</text><text x="824" y="184">25</text><text x="1092" y="184">186 ms</text></g>
+    <g font-size="11" fill="#A0A8B8"><text x="288" y="207">连接配置集中管理</text><text x="556" y="207">只请求 /models</text><text x="824" y="207">可加入外部 Agent</text><text x="1092" y="207">最近一次探测</text></g>
+
+    <text x="264" y="268" font-size="17" font-weight="800">供应商模型库</text>
+    <text x="264" y="290" font-size="12" fill="#7A8499">添加 URL 后拉取模型；只勾选常用模型进入本地路由池。</text>
+    <rect x="264" y="310" width="660" height="300" rx="16" fill="#FFFFFF" stroke="#E5E8F0"/>
+    <rect x="280" y="326" width="628" height="42" rx="10" fill="#F7F8FC"/>
+    <g font-size="11" fill="#8B94A8"><text x="300" y="352">供应商</text><text x="526" y="352">模型</text><text x="730" y="352">状态</text><text x="830" y="352">延迟</text></g>
+    <g font-size="12">
+      <line x1="280" y1="378" x2="908" y2="378" stroke="#EEF0F5"/><circle cx="301" cy="400" r="6" fill="#39C98A"/><text x="318" y="405">DSH</text><text x="526" y="405" fill="#667085">本地桥接</text><text x="730" y="405" fill="#39A978">已连接</text><text x="830" y="405">12 ms</text>
+      <line x1="280" y1="420" x2="908" y2="420" stroke="#EEF0F5"/><circle cx="301" cy="442" r="6" fill="#39C98A"/><text x="318" y="447">Codex Router</text><text x="526" y="447">deepseek-v4-pro</text><text x="730" y="447" fill="#39A978">已连接</text><text x="830" y="447">168 ms</text>
+      <line x1="280" y1="462" x2="908" y2="462" stroke="#EEF0F5"/><circle cx="301" cy="484" r="6" fill="#F3A84B"/><text x="318" y="489">TeamoRouter</text><text x="526" y="489">gpt-6-astra</text><text x="730" y="489" fill="#B47B25">待测速</text><text x="830" y="489">—</text>
+      <line x1="280" y1="504" x2="908" y2="504" stroke="#EEF0F5"/><circle cx="301" cy="526" r="6" fill="#39C98A"/><text x="318" y="531">CC Switch</text><text x="526" y="531">claude-opus-5</text><text x="730" y="531" fill="#39A978">已连接</text><text x="830" y="531">203 ms</text>
+      <line x1="280" y1="546" x2="908" y2="546" stroke="#EEF0F5"/><circle cx="301" cy="568" r="6" fill="#E36B72"/><text x="318" y="573">OpenCode</text><text x="526" y="573">未发现模型</text><text x="730" y="573" fill="#C95762">不可用</text><text x="830" y="573">—</text>
+    </g>
+    <rect x="280" y="624" width="148" height="34" rx="9" fill="#6376FF"/><text x="314" y="646" fill="#FFFFFF" font-size="12" font-weight="700">＋ 添加供应商</text>
+    <rect x="440" y="624" width="112" height="34" rx="9" fill="#FFFFFF" stroke="#E1E5EF"/><text x="466" y="646" font-size="12">测速全部</text>
+    <rect x="564" y="624" width="132" height="34" rx="9" fill="#FFFFFF" stroke="#E1E5EF"/><text x="588" y="646" font-size="12">导入已有线路</text>
+
+    <text x="960" y="268" font-size="17" font-weight="800">Agent 管理</text>
+    <text x="960" y="290" font-size="12" fill="#7A8499">检测真实配置文件；点击 ＋ 从左侧模型池添加。</text>
+    <rect x="960" y="310" width="308" height="348" rx="16" fill="#FFFFFF" stroke="#E5E8F0"/>
+    <g font-size="12">
+      <rect x="976" y="326" width="276" height="62" rx="12" fill="#F7F8FC"/><circle cx="1000" cy="357" r="15" fill="#EEF1FF"/><text x="994" y="363" fill="#6376FF" font-size="14">⌘</text><text x="1024" y="350" font-weight="700">Codex</text><text x="1024" y="370" fill="#7A8499">当前：deepseek-v4.1-flash</text><rect x="1208" y="342" width="30" height="30" rx="8" fill="#6376FF"/><text x="1217" y="363" fill="#FFFFFF" font-size="19">＋</text>
+      <rect x="976" y="398" width="276" height="62" rx="12" fill="#F7F8FC"/><circle cx="1000" cy="429" r="15" fill="#FFF2DF"/><text x="994" y="435" fill="#D79033" font-size="14">Z</text><text x="1024" y="422" font-weight="700">ZCode</text><text x="1024" y="442" fill="#7A8499">当前：GLM-5.3</text><rect x="1208" y="414" width="30" height="30" rx="8" fill="#6376FF"/><text x="1217" y="435" fill="#FFFFFF" font-size="19">＋</text>
+      <rect x="976" y="470" width="276" height="62" rx="12" fill="#F7F8FC"/><circle cx="1000" cy="501" r="15" fill="#E9F9F2"/><text x="994" y="507" fill="#39A978" font-size="14">C</text><text x="1024" y="494" font-weight="700">Claude Code</text><text x="1024" y="514" fill="#7A8499">当前：claude-opus-5</text><rect x="1208" y="486" width="30" height="30" rx="8" fill="#6376FF"/><text x="1217" y="507" fill="#FFFFFF" font-size="19">＋</text>
+      <rect x="976" y="542" width="276" height="62" rx="12" fill="#F7F8FC"/><circle cx="1000" cy="573" r="15" fill="#F1ECFF"/><text x="994" y="579" fill="#815BD4" font-size="14">D</text><text x="1024" y="566" font-weight="700">DSH</text><text x="1024" y="586" fill="#7A8499">当前：本地桥接</text><rect x="1208" y="558" width="30" height="30" rx="8" fill="#6376FF"/><text x="1217" y="579" fill="#FFFFFF" font-size="19">＋</text>
+    </g>
+    <rect x="960" y="676" width="308" height="92" rx="16" fill="#FFFFFF" stroke="#E5E8F0"/><text x="980" y="703" font-size="13" font-weight="700">Jev 档位模型</text><text x="980" y="725" font-size="11" fill="#7A8499">Luna · Terra · Sol · Astra</text><text x="980" y="749" font-size="12" fill="#6376FF">统一从本地模型池选择 →</text>
+    <text x="264" y="720" font-size="17" font-weight="800">路由说明</text>
+    <text x="264" y="747" font-size="12" fill="#7A8499">健康探测只请求 /models，不发送生成请求。供应商设置保存后，所有 Agent 引用自动同步。</text>
+    <rect x="264" y="776" width="660" height="52" rx="12" fill="#EEF1FF"/><circle cx="292" cy="802" r="8" fill="#6376FF"/><text x="312" y="807" font-size="12" fill="#3C4DB5">关闭窗口不会退出 AI助手；语音入口默认关闭，点击“开始说话”才申请麦克风权限。</text>
+  </g>
+</svg>
