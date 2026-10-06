@@ -2,7 +2,7 @@
     "name": "统一 Agent 路由（DSH / Codex / 第三方中转站）",
     "executable": "/usr/bin/python3",
     "arguments": [
-        "/Users/mac/Library/Application Support/LocalSiriLLM/unified_router.py",
+        "$HOME/Library/Application Support/LocalSiriLLM/unified_router.py",
         "--agent",
         "default"
     ],

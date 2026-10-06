@@ -285,9 +285,9 @@ private func case1() {
     perform(1, "手写线路进池（收编只加连接、只改这些行自己的归属），然后还原",
             "两条手写线路（同址同密钥，没有归属）收编后进模型池；收编只新增连接、只给这两行写 connection_id；还原后 router.json 逐字节回到开局。",
             providers: [
-                row(id: "mine-primary", name: "手写·主线路", model: "gpt-5.1", baseURL: address, apiKey: "sk-mine"),
-                row(id: "mine-backup", name: "手写·备线路", model: "gpt-5.1-mini", baseURL: address, apiKey: "sk-mine"),
-                row(id: "mine-nameless", name: "手写·只写了名字", model: nil, baseURL: address, apiKey: "sk-mine"),
+                row(id: "mine-primary", name: "手写·主线路", model: "gpt-5.1", baseURL: address, apiKey: "fixture-key-mine"),
+                row(id: "mine-backup", name: "手写·备线路", model: "gpt-5.1-mini", baseURL: address, apiKey: "fixture-key-mine"),
+                row(id: "mine-nameless", name: "手写·只写了名字", model: nil, baseURL: address, apiKey: "fixture-key-mine"),
             ],
             agents: [agent(id: "default", name: "默认", providerIDs: [])]) { cs in
         printAfter(cs)
@@ -321,7 +321,7 @@ private func case1() {
               got: diff.joined(separator: "；"), want: "只出现 connections.* 和 providers.0/1.connection_id")
         let untouched = ["model", "base_url", "api_key", "enabled", "name", "source"].allSatisfy { key in
             cs.provider("mine-primary")?[key] as? String == row(id: "mine-primary", name: "手写·主线路", model: "gpt-5.1",
-                                                              baseURL: address, apiKey: "sk-mine")[key] as? String
+                                                              baseURL: address, apiKey: "fixture-key-mine")[key] as? String
         }
         check("线路行自己的 model / 地址 / 密钥 / 开关一个都没改", untouched,
               got: stableString(cs.provider("mine-primary")), want: "地址 https://api.mine.example/v1、model gpt-5.1、enabled true")
@@ -362,7 +362,7 @@ private func case2() {
             ],
             connections: [
                 connection(id: "ark-agent-plan", name: "Ark Agent Plan", baseURL: "https://ark.example/v1",
-                           apiKey: "sk-ark", models: ["ark-model"]),
+                           apiKey: "fixture-key-ark", models: ["ark-model"]),
             ],
             agents: [agent(id: "default", name: "默认", providerIDs: [])]) { cs in
         let bound = cs.provider("ark-line")
@@ -395,7 +395,7 @@ private func case2() {
               + " 连接里的模型=\(((arkConnection?["models"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String })")
         check("收编没有动用户自己那条连接（键级）",
               arkConnection?["name"] as? String == "Ark Agent Plan"
-              && arkConnection?["api_key"] as? String == "sk-ark"
+              && arkConnection?["api_key"] as? String == "fixture-key-ark"
               && arkConnection?["source"] as? String == "manual",
               got: stableString(arkConnection), want: "名字/密钥/source 原样")
         check("收编后两条线路都在池里",
@@ -501,8 +501,8 @@ private func case6() {
     perform(6, "两条地址不一样的手写线路（合成一条连接时地址放哪）",
             "同一个来源标签下地址不一致时，收编仍然只加一条连接，地址留空、各条线路继续用自己那行的地址（绝不改写任何一行的地址）。",
             providers: [
-                row(id: "two-a", name: "手写·A", model: "m-a", baseURL: "https://a.example/v1", apiKey: "sk-a"),
-                row(id: "two-b", name: "手写·B", model: "m-b", baseURL: "https://b.example/v1", apiKey: "sk-b"),
+                row(id: "two-a", name: "手写·A", model: "m-a", baseURL: "https://a.example/v1", apiKey: "fixture-key-a"),
+                row(id: "two-b", name: "手写·B", model: "m-b", baseURL: "https://b.example/v1", apiKey: "fixture-key-b"),
             ],
             agents: [agent(id: "default", name: "默认", providerIDs: [])]) { cs in
         let plan = cs.model.planAdoption()
@@ -520,8 +520,8 @@ private func case6() {
         check("两条线路各自的地址、密钥一个字节都没改",
               (cs.provider("two-a")?["base_url"] as? String) == "https://a.example/v1"
               && (cs.provider("two-b")?["base_url"] as? String) == "https://b.example/v1"
-              && (cs.provider("two-a")?["api_key"] as? String) == "sk-a"
-              && (cs.provider("two-b")?["api_key"] as? String) == "sk-b",
+              && (cs.provider("two-a")?["api_key"] as? String) == "fixture-key-a"
+              && (cs.provider("two-b")?["api_key"] as? String) == "fixture-key-b",
               got: "\(compact(cs.provider("two-a")?["base_url"] ?? "")) / \(compact(cs.provider("two-b")?["base_url"] ?? ""))",
               want: "各自原样")
         check("两条都进池了", cs.poolNames() == ["m-a", "m-b"], got: "池=\(cs.poolNames())", want: "[m-a, m-b]")
@@ -536,7 +536,7 @@ private func case7() {
             ],
             connections: [
                 connection(id: "shared-api", name: "我的共享站", baseURL: "https://api.shared.example/v1/",
-                           apiKey: "sk-user", source: "manual", models: ["m-user"]),
+                           apiKey: "fixture-key-user", source: "manual", models: ["m-user"]),
             ],
             agents: [agent(id: "default", name: "默认", providerIDs: [])]) { cs in
         let plan = cs.model.planAdoption()
@@ -547,15 +547,15 @@ private func case7() {
 
         let merged = cs.connection("shared-api")
         fact("用户的连接现在：名字=「\((merged?["name"] as? String) ?? "")」"
-              + " 密钥=\(((merged?["api_key"] as? String) ?? "").isEmpty ? "（空）" : "「sk-user」还在")"
+              + " 密钥=\(((merged?["api_key"] as? String) ?? "").isEmpty ? "（空）" : "「fixture-key-user」还在")"
               + " 连接里的模型=\(((merged?["models"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String })"
               + " source=「\((merged?["source"] as? String) ?? "")」")
         check("没有新建连接（同址合并，盘上连接数不变）", cs.connections().count == 1,
               got: "\(cs.connections().count) 条连接：\(cs.connections().compactMap { $0["id"] as? String })", want: "1 条")
         check("用户的连接名字没被改", merged?["name"] as? String == "我的共享站",
               got: compact(merged?["name"] ?? ""), want: "「我的共享站」")
-        check("用户的密钥没被改", merged?["api_key"] as? String == "sk-user",
-              got: compact(merged?["api_key"] ?? ""), want: "「sk-user」")
+        check("用户的密钥没被改", merged?["api_key"] as? String == "fixture-key-user",
+              got: compact(merged?["api_key"] ?? ""), want: "「fixture-key-user」")
         check("用户连接里本来有的模型列表没被清掉",
               ((merged?["models"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String } == ["m-user"],
               got: "\(((merged?["models"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String })", want: "[m-user]")
@@ -574,8 +574,8 @@ private func case7() {
         check("还原后用户连接的模型列表还是 [m-user]",
               ((cs.connection("shared-api")?["models"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String } == ["m-user"],
               got: "\(((cs.connection("shared-api")?["models"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String })", want: "[m-user]")
-        check("还原后用户的密钥还是 sk-user", cs.connection("shared-api")?["api_key"] as? String == "sk-user",
-              got: compact(cs.connection("shared-api")?["api_key"] ?? ""), want: "「sk-user」")
+        check("还原后用户的密钥还是 fixture-key-user", cs.connection("shared-api")?["api_key"] as? String == "fixture-key-user",
+              got: compact(cs.connection("shared-api")?["api_key"] ?? ""), want: "「fixture-key-user」")
         check("还原后 router.json 逐字节回到开局", byteIdentical(cs),
               got: "字节不同；键级差异=\(cs.diffFromBefore().joined(separator: "；"))", want: "字节相同")
     }

@@ -683,10 +683,7 @@ def _laya_prescreen(query: str) -> dict[str, str] | None:
         return None
     try:
         child = subprocess.Popen(
-            [
-                "/Users/mac/Library/Application Support/LocalSiriLLM/laya-venv/bin/python",
-                "/Users/mac/Library/Application Support/LocalSiriLLM/laya_router.py",
-            ],
+            [LAYA_PYTHON, LAYA_ROUTER],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

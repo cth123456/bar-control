@@ -731,7 +731,7 @@ final class RouterStore {
             store.updateProvider(at: providerIndex, with: [
                 "base_url": "https://api.teamorouter.com/v1",
                 "model": "gpt-6-astra",
-                "api_key": "sk-first",
+                "api_key": "fixture-key-first",
                 "wire_api": "chat_completions",
             ])
             let providerID = store.providerID(at: providerIndex) ?? ""
@@ -753,7 +753,7 @@ final class RouterStore {
             let connectionID = store.addConnection(
                 name: "Test API",
                 baseURL: "https://models.example.test/v1",
-                apiKey: "sk-connection-test",
+                apiKey: "fixture-key-connection-test",
                 wireAPI: "responses",
                 catalog: [["id": "model-a", "name": "Model A", "owned_by": "test"]],
                 selectedModelIDs: ["model-a"]
@@ -764,7 +764,7 @@ final class RouterStore {
             let connectionProvider = store.resolvedProvider(at: connectionProviderIndex) ?? [:]
             check(connectionID == "test-api", "供应商连接单独保存：\(connectionID)")
             check((connectionProvider["base_url"] as? String) == "https://models.example.test/v1", "模型路由继承供应商 Base URL")
-            check((connectionProvider["api_key"] as? String) == "sk-connection-test", "模型路由继承供应商 Key")
+            check((connectionProvider["api_key"] as? String) == "fixture-key-connection-test", "模型路由继承供应商 Key")
 
             let emptyConnectionID = store.addConnection(
                 name: "No Model Yet",
@@ -802,14 +802,14 @@ final class RouterStore {
             // 改供应商的 Key/模型 → 引用它的 Agent 必须看到新值
             let index = reopened.providers.firstIndex { ($0["id"] as? String) == providerID } ?? -1
             reopened.updateProvider(at: index, with: [
-                "api_key": "sk-second",
+                "api_key": "fixture-key-second",
                 "model": "gpt-6-astra-turbo",
             ])
             try reopened.save()
             let after = RouterStore(configURL: url)
             try after.load()
             let linked = after.providers.first { ($0["id"] as? String) == providerID } ?? [:]
-            check((linked["api_key"] as? String) == "sk-second", "改 Key 后 Agent 取到新 Key")
+            check((linked["api_key"] as? String) == "fixture-key-second", "改 Key 后 Agent 取到新 Key")
             check((linked["model"] as? String) == "gpt-6-astra-turbo", "改模型后 Agent 取到新模型")
             check((after.agents.first?["provider_ids"] as? [String])?.count == 2, "Agent 引用未被改配置破坏")
             check(after.assistantAgentID == "coding", "助手默认 Agent 已持久化：\(after.assistantAgentID)")
@@ -820,7 +820,7 @@ final class RouterStore {
             check(after.gatewayAgentID == "omni", "网关默认 Agent omni")
             after.setGatewayAgent(id: "coding")
             after.setGatewayPort(4321)
-            after.setGatewayKey("sk-gateway-test")
+            after.setGatewayKey("fixture-key-gateway-test")
             try after.save()
             let gatewayReloaded = RouterStore(configURL: url)
             try gatewayReloaded.load()
@@ -828,7 +828,7 @@ final class RouterStore {
             check(gatewayReloaded.gatewayPort == 4321, "网关端口已持久化")
             check(
                 (gatewayReloaded.root["gateway"] as? [String: Any])?["api_key"] as? String
-                    == "sk-gateway-test",
+                    == "fixture-key-gateway-test",
                 "网关密钥已持久化"
             )
 
@@ -1482,7 +1482,7 @@ final class RouterManagerWindowController: NSWindowController,
             field.lineBreakMode = .byTruncatingMiddle
             field.placeholderString = field === timeoutField ? "秒" : ""
         }
-        apiKeyField.placeholderString = "sk-...（留空则用下面的 Key 文件）"
+        apiKeyField.placeholderString = "fixture-key-...（留空则用下面的 Key 文件）"
         apiKeyFileField.placeholderString = "可选：一行文本的 Key 文件路径"
         baseURLField.placeholderString = "https://api.example.com/v1"
         modelField.placeholderString = "模型 id，如 gpt-6-astra"

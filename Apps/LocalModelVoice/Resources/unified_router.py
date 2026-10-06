@@ -2205,7 +2205,7 @@ def plan_agent_model(config: dict[str, Any] | None = None, **options: Any) -> di
     settings = gateway_settings(staged)
     # 预览只展示结构和地址，绝不把现有网关密钥带进确认框。真正写入时
     # `add_model_to_external_agent` 仍会从真实配置读取密钥。
-    settings["api_key"] = "sk-gateway-（写入时使用已配置密钥）"
+    settings["api_key"] = "gateway-key-（写入时使用已配置密钥）"
     saved_paths = (BASE_DIR, CONFIG_PATH)
     with tempfile.TemporaryDirectory(prefix="ai-assistant-plan-") as temporary:
         # 预览期间连配置写入都挪进临时目录：真实文件一个字节都不许动。
@@ -2828,7 +2828,10 @@ def run_command(provider: dict[str, Any], prompt: str) -> str:
     executable = str(provider.get("executable") or "")
     if not executable or not os.path.isfile(executable) or not os.access(executable, os.X_OK):
         raise RuntimeError(f"{provider.get('name', '命令供应商')} 不可用：{executable}")
-    arguments = [str(item) for item in (provider.get("arguments") or [])]
+    arguments = [
+        os.path.expandvars(os.path.expanduser(str(item)))
+        for item in (provider.get("arguments") or [])
+    ]
     timeout = float(provider.get("timeout_seconds") or DEFAULT_TIMEOUT)
     process = subprocess.Popen(
         [executable, *arguments],
@@ -3357,7 +3360,7 @@ def ensure_gateway_key(config: dict[str, Any] | None = None) -> str:
     settings = gateway_settings(payload)
     key = str(settings.get("api_key") or "").strip()
     if not key:
-        key = f"sk-gateway-{uuid.uuid4().hex[:32]}"
+        key = f"gateway-key-{uuid.uuid4().hex[:32]}"
         settings["api_key"] = key
         write_config(payload)
     return key
