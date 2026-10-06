@@ -644,7 +644,7 @@ enum HubStrategySync {
             guard let first = line.first, first == "+" || first == "-" else { return nil }
             if line.hasPrefix("+++") || line.hasPrefix("---") { return nil }
             // 确认框是用户可见内容，网关密钥不能因为脚本版本较旧而被带出来。
-            return line.replacingOccurrences(of: "gateway-key-[A-Za-z0-9._-]+",
+            return line.replacingOccurrences(of: "[s][k]-gateway-[A-Za-z0-9._-]+|gateway-key-[A-Za-z0-9._-]+",
                                               with: "gateway-key-（已隐藏）",
                                               options: .regularExpression)
         }
