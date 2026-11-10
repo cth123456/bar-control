@@ -2,7 +2,7 @@
 
 ## Evidence
 
-- Source visual truth: `/Users/mac/Downloads/IMG_4664.jpg`.
+- Source visual truth: `<本机参考图，未随仓库分发>`.
 - Source pixels: 1290 x 563.
 - Canonical expanded vector source retained for the measured-device state: `/Users/mac/Downloads/power_flow_ui_figma_precise.svg` (1290 x 681).
 - Rendered compact implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-compact-menu-material-light.png`.
@@ -187,7 +187,7 @@ earlier status: implementation validated; visual acceptance and installation pen
 ### Evidence
 
 - Geometry reference: `/Users/mac/Downloads/IMG_4665.jpg` (782 x 416 pixels).
-- White liquid-glass reference: `/Users/mac/Downloads/IMG_4664.jpg` (1290 x 563 pixels).
+- White liquid-glass reference: `<本机参考图，未随仓库分发>` (1290 x 563 pixels).
 - Dynamic implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
 - Zero-battery implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-battery-idle-menu-material-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
 - Single-output implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
@@ -273,7 +273,7 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Light source visual truth: `/Users/mac/Downloads/IMG_4664.jpg` (1290 x 563 pixels).
+- Light source visual truth: `<本机参考图，未随仓库分发>` (1290 x 563 pixels).
 - Dark hierarchy source visual truth: `/Users/mac/Downloads/IMG_4665.jpg` (782 x 416 pixels).
 - Official behavior and appearance reference: `https://apphousekitchen.com/aldente-overview/features/`, including its charging and underpowered-charger screenshots.
 - Revised light implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
@@ -314,7 +314,7 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- White source visual: `/Users/mac/Downloads/IMG_4664.jpg`.
+- White source visual: `<本机参考图，未随仓库分发>`.
 - Dark hierarchy source visual: `/Users/mac/Downloads/IMG_4665.jpg`.
 - Revised single-device state: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-state-single-device.png`.
 - Revised low-battery compact state: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-state-compact-low-battery.png`.
@@ -347,7 +347,7 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Source visual truth: `/Users/mac/Downloads/IMG_4664.jpg` and `/Users/mac/Downloads/IMG_4665.jpg`.
+- Source visual truth: `<本机参考图，未随仓库分发>` and `/Users/mac/Downloads/IMG_4665.jpg`.
 - Revised single-device implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-state-single-device.png` (780 x 375 pixels).
 - Revised hierarchy implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
 - The two source/implementation state pairs were opened together in one full-view comparison input. Attachment edges and the 3.90 W branch remain clearly readable at this size, so a separate focused crop was not required.
@@ -390,7 +390,7 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Geometry references: `/Users/mac/Downloads/IMG_4664.jpg` and `/Users/mac/Downloads/IMG_4665.jpg`.
+- Geometry references: `<本机参考图，未随仓库分发>` and `/Users/mac/Downloads/IMG_4665.jpg`.
 - Deterministic internal-breakdown render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png`.
 - Dark-mode render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-dark.png`.
 - Revised single-device render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`.
