@@ -244,7 +244,9 @@ struct LocalIntent: Codable, Equatable, Sendable {
 }
 
 enum RemoteControlConstants {
-    static let cloudContainerIdentifier = "iCloud.com.cth123456.BarControlRemote"
+    static var cloudContainerIdentifier: String {
+        Bundle.main.object(forInfoDictionaryKey: "BarControlCloudKitContainerIdentifier") as? String ?? ""
+    }
     static let localChatThreadID = "local-chat"
     static let commandRecordType = "RemoteCommand"
     static let eventRecordType = "RemoteEvent"

@@ -22,7 +22,8 @@ let package = Package(
         .executableTarget(
             name: "CodexTouchBarNative",
             dependencies: ["PowerTelemetrySupport"],
-            path: "Sources/CodexTouchBarNative"
+            path: "Sources/CodexTouchBarNative",
+            resources: [.copy("Resources/MagpieIcons")]
         ),
         .executableTarget(
             name: "BarControlPowerHelper",

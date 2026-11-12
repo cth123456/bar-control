@@ -354,6 +354,7 @@ actor CloudKitRelay {
     }
 
     private static func hasCloudKitEntitlement() -> Bool {
+        guard !RemoteControlConstants.cloudContainerIdentifier.isEmpty else { return false }
         guard
             let task = SecTaskCreateFromSelf(nil),
             let services = SecTaskCopyValueForEntitlement(

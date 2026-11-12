@@ -12,23 +12,80 @@ final class ChargingLimitTests: XCTestCase {
         )
     }
 
-    func testDischargingPolicyHoldsAtMinimum() {
+    func testDischargingStopsChargingAtCurrentLevel() {
+        // 优先放电 = 保持适配器供电、停止给电池充电：上限压到当前电量。
         XCTAssertEqual(
             PowerFlowPolicy.discharging.chargingLimitDecision(
-                macBatteryPercent: 90,
+                macBatteryPercent: 92,
+                externalBatteryPercent: 90
+            ),
+            .hold(percent: 92)
+        )
+        // 低于固件下限时只能保持 80%。
+        XCTAssertEqual(
+            PowerFlowPolicy.discharging.chargingLimitDecision(
+                macBatteryPercent: 55,
                 externalBatteryPercent: 90
             ),
             .hold(percent: 80)
         )
     }
 
-    func testBalancedHoldsWhenBothDevicesAreHealthy() {
+    func testSailingKeepsBatteryInsideBand() {
+        // 达到上限：停在上限不再充。
         XCTAssertEqual(
             PowerFlowPolicy.balanced.chargingLimitDecision(
-                macBatteryPercent: 80,
-                externalBatteryPercent: 65
+                macBatteryPercent: 91, externalBatteryPercent: 60, balancedLower: 80, balancedUpper: 90
+            ),
+            .hold(percent: 90)
+        )
+        XCTAssertEqual(
+            PowerFlowPolicy.balanced.chargingLimitDecision(
+                macBatteryPercent: 90, externalBatteryPercent: 60, balancedLower: 80, balancedUpper: 90
+            ),
+            .hold(percent: 90)
+        )
+        // 掉到下限：放到上限重新充。
+        XCTAssertEqual(
+            PowerFlowPolicy.balanced.chargingLimitDecision(
+                macBatteryPercent: 80, externalBatteryPercent: 60, balancedLower: 80, balancedUpper: 90
+            ),
+            .hold(percent: 90)
+        )
+        XCTAssertEqual(
+            PowerFlowPolicy.balanced.chargingLimitDecision(
+                macBatteryPercent: 79, externalBatteryPercent: 60, balancedLower: 80, balancedUpper: 90
+            ),
+            .hold(percent: 90)
+        )
+        // 区间中间：压到下限，保持不充。
+        XCTAssertEqual(
+            PowerFlowPolicy.balanced.chargingLimitDecision(
+                macBatteryPercent: 85, externalBatteryPercent: 60, balancedLower: 80, balancedUpper: 90
             ),
             .hold(percent: 80)
+        )
+    }
+
+    func testBalancedHoldsAtConfigurableTarget() {
+        XCTAssertEqual(
+            PowerFlowPolicy.balanced.chargingLimitDecision(
+                macBatteryPercent: 95, externalBatteryPercent: 65, balancedLower: 80, balancedUpper: 85
+            ),
+            .hold(percent: 85)
+        )
+        XCTAssertEqual(
+            PowerFlowPolicy.balanced.chargingLimitDecision(
+                macBatteryPercent: 95, externalBatteryPercent: 65, balancedLower: 85, balancedUpper: 90
+            ),
+            .hold(percent: 90)
+        )
+        // 低于固件下限的配置被钳到 80：此时 95% 已在上限之上，停在上限。
+        XCTAssertEqual(
+            PowerFlowPolicy.balanced.chargingLimitDecision(
+                macBatteryPercent: 95, externalBatteryPercent: 65, balancedLower: 60, balancedUpper: 90
+            ),
+            .hold(percent: 90)
         )
     }
 
@@ -62,9 +119,10 @@ final class ChargingLimitTests: XCTestCase {
         XCTAssertEqual(
             PowerFlowPolicy.balanced.chargingLimitDecision(
                 macBatteryPercent: 80,
-                externalBatteryPercent: nil
+                externalBatteryPercent: nil,
+                balancedLower: 80, balancedUpper: 85
             ),
-            .hold(percent: 80)
+            .hold(percent: 85)
         )
     }
 

@@ -54,7 +54,7 @@ typedef int32_t (*ProcNameFn)(int32_t, void *, uint32_t);
 enum {
     BCPT_MAX_PROCESSES = 4096,
     BCPT_PROCESS_NAME_BYTES = 96,
-    BCPT_RESULT_COUNT = 3,
+    BCPT_RESULT_COUNT = 12,
     BCPT_RUSAGE_INFO_V4 = 4,
     BCPT_RUSAGE_V4_SIZE = 296,
     BCPT_BILLED_ENERGY_OFFSET = 264
@@ -67,6 +67,7 @@ typedef struct {
 } BCPTProcessState;
 
 typedef struct {
+    int32_t pid;
     char name[BCPT_PROCESS_NAME_BYTES];
     double watts;
 } BCPTProcessResult;
@@ -339,6 +340,7 @@ static void bcpt_update_process_results(
             continue;
         }
         strlcpy(candidates[candidate_count].name, item->name, BCPT_PROCESS_NAME_BYTES);
+        candidates[candidate_count].pid = item->pid;
         candidates[candidate_count].watts = watts;
         candidate_count++;
     }
@@ -563,6 +565,11 @@ const char *bcpt_sampler_process_name(const BCPTSampler *sampler, int index) {
         return NULL;
     }
     return sampler->process_results[index].name;
+}
+
+int32_t bcpt_sampler_process_pid(const BCPTSampler *sampler, int index) {
+    if (sampler == NULL || index < 0 || index >= sampler->process_result_count) return 0;
+    return sampler->process_results[index].pid;
 }
 
 double bcpt_sampler_process_watts(const BCPTSampler *sampler, int index) {

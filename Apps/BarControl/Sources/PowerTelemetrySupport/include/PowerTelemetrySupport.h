@@ -11,6 +11,9 @@ extern "C" {
 
 typedef struct BCPTSampler BCPTSampler;
 
+/// Battery percentage (0...100) of an already paired USB device, or -1.
+int bcpt_read_external_battery(const char *usb_serial);
+
 /// Creates a sampler for the private, read-only macOS IOReport Energy Model.
 /// Returns NULL when the channels are unavailable on this Mac/macOS version.
 BCPTSampler *bcpt_sampler_create(void);
@@ -29,8 +32,10 @@ int bcpt_sampler_read(
 
 /// Process values use the kernel's billed-energy counter. They are best-effort
 /// attribution and intentionally kept separate from the CPU/GPU hardware totals.
+/// At most 12 entries, sorted by watts descending.
 int bcpt_sampler_process_count(const BCPTSampler *sampler);
 const char *bcpt_sampler_process_name(const BCPTSampler *sampler, int index);
+int32_t bcpt_sampler_process_pid(const BCPTSampler *sampler, int index);
 double bcpt_sampler_process_watts(const BCPTSampler *sampler, int index);
 
 /// Reads actual fan RPM values from the read-only AppleSMC F0Ac...F3Ac
@@ -57,6 +62,18 @@ int bcpt_charge_limit_set(int percent);
 /// 1 only when the SMC accepted the write.
 int bcpt_adapter_control_read(uint8_t *raw_out);
 int bcpt_adapter_control_set(uint8_t raw);
+
+/// Touch Bar absolute brightness via the display bound to TouchBarUserDevice.
+/// Main-thread calls only. Unavailable/unsupported values are -1.
+typedef struct {
+    int display_id;
+    int display_state;
+    double brightness;
+    double nits;
+} BCPTTouchBarBrightness;
+bool bcpt_touchbar_brightness_read(BCPTTouchBarBrightness *out);
+/// Transient, normalized 0..1 write. Never wakes an off/unknown display.
+bool bcpt_touchbar_brightness_set(double level);
 
 #ifdef __cplusplus
 }

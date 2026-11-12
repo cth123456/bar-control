@@ -1,0 +1,3 @@
+Provider icons are copied from yetone/magpie, internal/gui/assets/icons.
+Source: https://github.com/yetone/magpie
+The Magpie repository is licensed under the MIT License.

@@ -19,10 +19,12 @@ fi
 
 cd "$PROJECT_DIR"
 /usr/bin/swift build -c release
+BUILD_BIN_PATH=$(/usr/bin/swift build -c release --show-bin-path)
 
 /bin/rm -rf "$APP_BUNDLE"
 /bin/mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 /usr/bin/ditto "$PROJECT_DIR/.build/release/CodexTouchBarNative" "$APP_BUNDLE/Contents/MacOS/CodexTouchBarNative"
+/usr/bin/ditto "$BUILD_BIN_PATH/CodexTouchBarNative_CodexTouchBarNative.bundle" "$APP_BUNDLE/Contents/Resources/CodexTouchBarNative_CodexTouchBarNative.bundle"
 /usr/bin/ditto "$PROJECT_DIR/.build/release/BarControlPowerHelper" "$APP_BUNDLE/Contents/MacOS/barcontrol-power-helper"
 /usr/bin/ditto "$PROJECT_DIR/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 if [[ -n "${BARCONTROL_CLOUDKIT_CONTAINER:-}" ]]; then

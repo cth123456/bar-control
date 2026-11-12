@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "repository": "cth123456/bar-control",
+  "latest": "0.40.6",
+  "releases": [
+    {
+      "version": "0.40.6",
+      "name": "Bar Control 模块与安装说明更新",
+      "published_at": "2026-11-12T00:00:00Z",
+      "url": "https://github.com/cth123456/bar-control/releases/tag/v0.40.6",
+      "notes": "更新与整理 Touch Bar、AI coding、能源流、电源策略、整机监控、亮度和菜单栏功能。完善设置和模块定制体验。GitHub 首页新增快速下载入口，并明确区分主 App 内置模块、可选随航管家和按需安装的放电 helper。常规使用无需 BetterTouchTool、Xcode 或管理员组件。"
+    },
+    {
+      "version": "0.40.0",
+      "name": "更新检查与关于页",
+      "published_at": "2026-11-10T12:00:00Z",
+      "url": "https://github.com/cth123456/bar-control/releases/tag/v0.40.0",
+      "notes": "新增\n· 发现新版本时弹窗提示，可跳过指定版本或稍后提醒\n· 设置里新增「关于」页：版本、更新检查、仓库链接、开源许可\n· 展开菜单的「Touch Bar 设置」右侧显示可更新版本\n\n改进\n· 自动检查更新默认开启，每 24 小时最多一次\n· 更新检查优先读取仓库里的静态清单，失败时才回退 GitHub Releases\n· 同一版本 24 小时内最多弹一次；跳过后不再提示该版本\n\n说明\n· 下载新版替换旧版即可，模块布局与设置会保留"
+    }
+  ]
+}

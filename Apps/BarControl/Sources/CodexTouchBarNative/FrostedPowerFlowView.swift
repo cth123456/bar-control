@@ -42,18 +42,18 @@ enum PowerFlowPolicy: Int, CaseIterable, Sendable {
 @MainActor
 final class PowerFlowPanelView: NSView {
     private enum Layout {
-        static let footerHeight: CGFloat = 126
+        static let footerHeight: CGFloat = 94
         static let horizontalInset: CGFloat = 8.5
         static let chipGap: CGFloat = 8
         static let chipHeight: CGFloat = 26
-        static let policyBottom: CGFloat = 94
         static let primaryChipBottom: CGFloat = 57
         static let temperatureChipBottom: CGFloat = 27
         static let captionBottom: CGFloat = 5
-        /// Two information rows (charger/cable summary and the underpowered
-        /// warning) live above the policy selector and only claim space when
-        /// they actually have something to say.
+        /// Two optional information rows (charger/cable summary and the
+        /// underpowered warning) only claim space when they have content.
         static let infoRowHeight: CGFloat = 17
+        /// 三态选择条 + 耗电应用排行两行，常驻在 footer 顶部。
+        static let policyStripHeight: CGFloat = 24
     }
 
     let flowView = FrostedPowerFlowView()
@@ -76,27 +76,13 @@ final class PowerFlowPanelView: NSView {
     )
     private let sourceLabel = NSTextField(labelWithString: "")
     private let negotiationLabel = NSTextField(labelWithString: "USB-C 自动协商")
-    private let policyLabel = NSTextField(labelWithString: "供电偏好")
     private let warningLabel = NSTextField(labelWithString: "")
+    private let policyStrip = NSSegmentedControl(labels: PowerFlowPolicy.allCases.map(\.title),
+                                                  trackingMode: .selectOne,
+                                                  target: nil, action: nil)
+    private let appsList = PowerAppUsageView(frame: .zero)
     private let chargerSummaryLabel = NSTextField(labelWithString: "")
     private let cableSummaryLabel = NSTextField(labelWithString: "")
-    private lazy var policyControl = PowerPolicySelector(
-        titles: PowerFlowPolicy.allCases.map(\.title),
-        selectedIndex: powerFlowPolicy.rawValue
-    )
-
-    private var powerFlowPolicy: PowerFlowPolicy {
-        get { PowerFlowPolicyStore.current }
-        set { PowerFlowPolicyStore.current = newValue }
-    }
-
-    private var resolvedPowerFlowPolicy: PowerFlowPolicy {
-        powerFlowPolicy.resolved(
-            macBatteryPercent: metrics.batteryPercent,
-            externalBatteryPercent: metrics.externalBatteryPercent
-        )
-    }
-
     var metrics = SystemMetrics.unavailable {
         didSet {
             flowView.metrics = metrics
@@ -116,6 +102,9 @@ final class PowerFlowPanelView: NSView {
 
     var isAnimating: Bool { flowView.isAnimating }
 
+    /// 供外部（自动规则）同步后刷新选择条。
+    var onPolicyChange: ((PowerFlowPolicy) -> Void)?
+
     init() {
         super.init(frame: .zero)
         wantsLayer = true
@@ -130,12 +119,6 @@ final class PowerFlowPanelView: NSView {
         negotiationLabel.textColor = .secondaryLabelColor
         negotiationLabel.alignment = .right
         negotiationLabel.lineBreakMode = .byTruncatingTail
-
-        policyLabel.font = .systemFont(ofSize: 10, weight: .semibold)
-        policyLabel.textColor = .secondaryLabelColor
-        policyLabel.stringValue = "Mac 供电"
-        policyLabel.lineBreakMode = .byTruncatingTail
-        policyLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         warningLabel.font = .systemFont(ofSize: 10, weight: .semibold)
         warningLabel.textColor = .systemOrange
@@ -153,14 +136,6 @@ final class PowerFlowPanelView: NSView {
         cableSummaryLabel.lineBreakMode = .byTruncatingTail
         cableSummaryLabel.isHidden = true
 
-        policyControl.setAccessibilityLabel("Mac 供电策略")
-        policyControl.setAccessibilityHelp(
-            "选择 Mac 端供电策略；「优先充电」放开系统充电上限，「负载均衡/优先放电」把系统充电上限压到 80% 让外接设备优先取电"
-        )
-        policyControl.onSelect = { [weak self] index in
-            self?.handlePolicySelection(index)
-        }
-
         addSubview(flowView)
         addSubview(localChip)
         addSubview(externalChip)
@@ -169,11 +144,19 @@ final class PowerFlowPanelView: NSView {
         addSubview(gpuTemperatureChip)
         addSubview(sourceLabel)
         addSubview(negotiationLabel)
-        addSubview(policyLabel)
-        addSubview(policyControl)
         addSubview(warningLabel)
         addSubview(chargerSummaryLabel)
         addSubview(cableSummaryLabel)
+
+        policyStrip.segmentStyle = .rounded
+        policyStrip.controlSize = .small
+        policyStrip.font = .systemFont(ofSize: 10, weight: .medium)
+        policyStrip.selectedSegment = PowerFlowPolicyStore.current.rawValue
+        policyStrip.target = self
+        policyStrip.action = #selector(policyStripChanged(_:))
+        addSubview(policyStrip)
+
+        addSubview(appsList)
         updateSummary()
         updateLayoutSize()
 
@@ -188,8 +171,8 @@ final class PowerFlowPanelView: NSView {
 
     override var isOpaque: Bool { false }
 
-    /// Extra rows sit between the chips and the policy selector, so the
-    /// footer (and therefore the whole panel) grows only when they are used.
+    /// Charger/cable and warning rows stack above the chips; the footer
+    /// grows only when those optional rows are present.
     private var infoRowCount: Int {
         var count = 0
         if !warningLabel.isHidden { count += 1 }
@@ -197,8 +180,12 @@ final class PowerFlowPanelView: NSView {
         return count
     }
 
+    private var appsRowHeight: CGFloat { appsList.contentHeight }
+    private var extraRowsHeight: CGFloat { Layout.policyStripHeight + appsRowHeight + 6 }
+
     private var effectiveFooterHeight: CGFloat {
-        Layout.footerHeight + CGFloat(infoRowCount) * Layout.infoRowHeight
+        Layout.footerHeight + extraRowsHeight
+            + CGFloat(infoRowCount) * Layout.infoRowHeight
     }
 
     override var intrinsicContentSize: NSSize {
@@ -217,12 +204,24 @@ final class PowerFlowPanelView: NSView {
             width: bounds.width,
             height: max(0, bounds.height - footer)
         )
-        // Extra rows stack upward from the original footer top, so the
-        // existing rows keep their exact positions at the bottom.
-        var extraRowTop = Layout.footerHeight
+        // Extra rows grow the footer and shift the flow view upward, keeping
+        // the chips and source caption pinned to the menu bottom.
+        policyStrip.frame = NSRect(
+            x: Layout.horizontalInset,
+            y: Layout.footerHeight + appsRowHeight + 4,
+            width: bounds.width - Layout.horizontalInset * 2,
+            height: Layout.policyStripHeight
+        )
+        appsList.frame = NSRect(
+            x: Layout.horizontalInset + 3,
+            y: Layout.footerHeight - 2,
+            width: bounds.width - Layout.horizontalInset * 2 - 6,
+            height: appsRowHeight
+        )
+        var extraRowTop = Layout.footerHeight + extraRowsHeight
         func takeRow() -> CGFloat {
-            extraRowTop += Layout.infoRowHeight
-            return extraRowTop - Layout.infoRowHeight + 1
+            defer { extraRowTop += Layout.infoRowHeight }
+            return extraRowTop
         }
         if !warningLabel.isHidden {
             warningLabel.frame = NSRect(
@@ -284,30 +283,14 @@ final class PowerFlowPanelView: NSView {
             width: bounds.width - Layout.horizontalInset - batteryTemperatureChip.frame.maxX - Layout.chipGap,
             height: Layout.chipHeight
         )
+        // 底部只保留来源/充电状态一行，避免与“系统充电上限”互相挤压。
         sourceLabel.frame = NSRect(
             x: Layout.horizontalInset + 3,
             y: Layout.captionBottom,
-            width: 244,
+            width: max(0, bounds.width - Layout.horizontalInset * 2 - 6),
             height: 16
         )
-        negotiationLabel.frame = NSRect(
-            x: 252,
-            y: Layout.captionBottom,
-            width: max(0, bounds.width - 252 - Layout.horizontalInset - 2),
-            height: 16
-        )
-        policyLabel.frame = NSRect(
-            x: Layout.horizontalInset + 3,
-            y: Layout.policyBottom + 5,
-            width: 116,
-            height: 16
-        )
-        policyControl.frame = NSRect(
-            x: policyLabel.frame.maxX + 8,
-            y: Layout.policyBottom,
-            width: max(0, bounds.width - policyLabel.frame.maxX - Layout.horizontalInset - 8),
-            height: Layout.chipHeight
-        )
+        negotiationLabel.frame = .zero
     }
 
     func startAnimating() {
@@ -335,8 +318,25 @@ final class PowerFlowPanelView: NSView {
         needsLayout = true
     }
 
+    /// 用户点选三态策略：立即生效，并记为用户手动选择。
+    @objc private func policyStripChanged(_ sender: NSSegmentedControl) {
+        guard let policy = PowerFlowPolicy(rawValue: sender.selectedSegment) else { return }
+        PowerFlowPolicyStore.current = policy
+        ChargingLimitController.shared.update(policy: policy, metrics: metrics, userInitiated: true)
+        AppLog.write("power policy selected=\(policy.title)")
+        onPolicyChange?(policy)
+    }
+
+    /// 外部（菜单/自动规则）改动策略时，同步选择条。
+    func syncPolicySelection(_ policy: PowerFlowPolicy) {
+        policyStrip.selectedSegment = policy.rawValue
+    }
+
+    private func updateAppUsageRow() {
+        appsList.update(samples: metrics.processPower)
+    }
+
     private func updateSummary() {
-        policyControl.setSelectedIndex(powerFlowPolicy.rawValue)
         localChip.title = "本机实际"
         localChip.value = Self.watts(metrics.localComputerWatts)
         externalChip.title = "外接设备"
@@ -348,14 +348,18 @@ final class PowerFlowPanelView: NSView {
         batteryTemperatureChip.value = Self.temperature(metrics.batteryTemperature)
         gpuTemperatureChip.title = "GPU"
         gpuTemperatureChip.value = Self.temperature(metrics.gpuTemperature)
-        sourceLabel.stringValue = sourceDescription
-        let adapter = AdapterDischargeController.shared
-        policyLabel.stringValue = "Mac 供电 · " + (adapter.isCut
-            ? "放电中"
-            : ChargingLimitController.shared.summaryText)
-        negotiationLabel.stringValue = powerPolicySummary
+        let chargingStatus = metrics.externalPower && metrics.batteryIsCharging == true
+            && metrics.batteryChargeWatts > 0.1 ? "充电中 · " : ""
+        sourceLabel.stringValue = chargingStatus + sourceDescription
+        sourceLabel.toolTip = "系统充电标记：\(metrics.showsChargingIndicator ? "充电中" : "未充电")；瞬时电池功率 \(Self.watts(metrics.batteryWatts))（正为充入，负为输出）。"
+        negotiationLabel.stringValue = ""
         updateInterfaceRows()
-        setAccessibilityValue("本机实际 \(localChip.value)，外接设备 \(externalChip.value)，风扇\(fanSummary.accessibility)，电池温度 \(batteryTemperatureChip.value)，GPU 温度 \(gpuTemperatureChip.value)，\(sourceDescription)，Mac 电量 \(batteryPercentText(metrics.batteryPercent))，外接设备电量 \(batteryPercentText(metrics.externalBatteryPercent))，策略 \(powerFlowPolicy.title)，当前 \(resolvedPowerFlowPolicy.title)，\(ChargingLimitController.shared.accessibilityText)" + interfaceAccessibilitySuffix())
+        updateAppUsageRow()
+        syncPolicySelection(PowerFlowPolicyStore.current)
+        let limitText = ChargingLimitController.shared.snapshot.isEnabled
+            ? ChargingLimitController.shared.snapshot.limitPercent.map { "系统充电上限 \($0)%" } ?? "系统充电上限未知"
+            : "系统充电上限未启用"
+        setAccessibilityValue("本机实际 \(localChip.value)，外接设备 \(externalChip.value)，风扇\(fanSummary.accessibility)，电池温度 \(batteryTemperatureChip.value)，GPU 温度 \(gpuTemperatureChip.value)，\(sourceDescription)，Mac 电量 \(batteryPercentText(metrics.batteryPercent))，外接设备电量 \(batteryPercentText(metrics.externalBatteryPercent))，\(limitText)" + interfaceAccessibilitySuffix())
     }
 
     private func interfaceAccessibilitySuffix() -> String {
@@ -364,37 +368,6 @@ final class PowerFlowPanelView: NSView {
         if !chargerSummaryLabel.isHidden { parts.append(chargerSummaryLabel.stringValue) }
         if !cableSummaryLabel.isHidden { parts.append(cableSummaryLabel.stringValue) }
         return parts.isEmpty ? "" : "，" + parts.joined(separator: "，")
-    }
-
-    private func handlePolicySelection(_ index: Int) {
-        guard let selection = PowerFlowPolicy(rawValue: index) else { return }
-        powerFlowPolicy = selection
-        applySelectedPolicy()
-        updateSummary()
-        // Picking 优先放电 without the helper is the exact moment the user
-        // expects it to work, so offer the one-time install right away. The
-        // system prompt is cancellable and nothing changes if dismissed.
-        if selection == .discharging, !AdapterDischargeController.shared.helperInstalled {
-            Task { @MainActor [weak self] in
-                let installed = await AdapterDischargeController.shared.installHelper()
-                if installed {
-                    AdapterDischargeController.shared.handlePolicySelection(.discharging)
-                }
-                self?.updateSummary()
-            }
-        }
-    }
-
-    /// Applies the current selection to the system levers. The panel is the
-    /// only user-facing switch for these, so a fresh selection always claims
-    /// control; balanced/charging additionally reconnects the charger.
-    func applySelectedPolicy() {
-        ChargingLimitController.shared.update(
-            policy: powerFlowPolicy,
-            metrics: metrics,
-            userInitiated: true
-        )
-        AdapterDischargeController.shared.handlePolicySelection(powerFlowPolicy)
     }
 
     /// Fills the two informational rows. Both are informational only: the
@@ -431,31 +404,6 @@ final class PowerFlowPanelView: NSView {
             cableSummaryLabel.stringValue = ""
             cableSummaryLabel.isHidden = true
         }
-    }
-
-    private var powerPolicySummary: String {
-        let selected = powerFlowPolicy
-        if selected == .discharging {
-            let adapter = AdapterDischargeController.shared
-            if !adapter.helperInstalled {
-                return "未安装放电组件"
-            }
-            if let error = adapter.lastError {
-                return error
-            }
-            return adapter.isCut ? "已断充电器 · 优先外接设备" : "Mac · 优先放电"
-        }
-        if selected == .balanced {
-            if let macBatteryPercent = metrics.batteryPercent,
-               macBatteryPercent < 20 {
-                return "自动 · 当前优先充电"
-            }
-            if metrics.batteryPercent != nil, metrics.externalBatteryPercent != nil {
-                return "自动 · 当前\(resolvedPowerFlowPolicy.title)"
-            }
-            return "自动 · 等待外接电量"
-        }
-        return "Mac · \(selected.title)"
     }
 
     private func batteryPercentText(_ value: Int?) -> String {
@@ -508,117 +456,6 @@ final class PowerFlowPanelView: NSView {
     }
 }
 
-/// Three-state power policy selector. A stock NSSegmentedControl always draws
-/// a group tray around all segments, which reads as a second border next to
-/// the selected pill; this control draws only the selected segment's pill and
-/// keeps hit-testing on the same equal-width geometry it draws with.
-@MainActor
-final class PowerPolicySelector: NSView {
-    var onSelect: ((Int) -> Void)?
-    private let titles: [String]
-    private(set) var selectedIndex: Int
-
-    init(titles: [String], selectedIndex: Int) {
-        self.titles = titles
-        self.selectedIndex = min(max(0, selectedIndex), max(0, titles.count - 1))
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.clear.cgColor
-        setAccessibilityElement(true)
-        setAccessibilityRole(.radioGroup)
-        updateAccessibilityValue()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override var isOpaque: Bool { false }
-
-    func setSelectedIndex(_ index: Int) {
-        guard titles.indices.contains(index), index != selectedIndex else { return }
-        selectedIndex = index
-        updateAccessibilityValue()
-        needsDisplay = true
-    }
-
-    private func segmentFrame(_ index: Int) -> NSRect {
-        let count = max(1, titles.count)
-        let width = bounds.width / CGFloat(count)
-        return NSRect(
-            x: CGFloat(index) * width,
-            y: 0,
-            width: width,
-            height: bounds.height
-        )
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        for index in titles.indices {
-            let frame = segmentFrame(index)
-            let isSelected = index == selectedIndex
-            if isSelected {
-                let pill = frame.insetBy(dx: 1.5, dy: 1)
-                let radius = min(pill.height / 2, 9)
-                let path = NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius)
-                if isDark {
-                    NSColor.white.withAlphaComponent(0.17).setFill()
-                } else {
-                    NSColor.white.withAlphaComponent(0.96).setFill()
-                }
-                path.fill()
-                if !isDark {
-                    NSColor.black.withAlphaComponent(0.07).setStroke()
-                    path.lineWidth = 0.5
-                    path.stroke()
-                }
-            }
-            let font = NSFont.systemFont(ofSize: 11, weight: isSelected ? .semibold : .regular)
-            let color: NSColor
-            if isSelected {
-                color = isDark ? .white : .black
-            } else {
-                color = isDark
-                    ? NSColor.white.withAlphaComponent(0.72)
-                    : NSColor.black.withAlphaComponent(0.62)
-            }
-            let style = NSMutableParagraphStyle()
-            style.alignment = .center
-            let string = NSAttributedString(
-                string: titles[index],
-                attributes: [
-                    .font: font,
-                    .foregroundColor: color,
-                    .paragraphStyle: style,
-                ]
-            )
-            let textHeight = string.size().height
-            string.draw(in: NSRect(
-                x: frame.minX,
-                y: frame.midY - textHeight / 2,
-                width: frame.width,
-                height: textHeight + 1
-            ))
-        }
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        guard bounds.width > 0, !titles.isEmpty else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        let raw = Int((point.x / bounds.width) * CGFloat(titles.count))
-        let index = min(titles.count - 1, max(0, raw))
-        setSelectedIndex(index)
-        onSelect?(index)
-    }
-
-    private func updateAccessibilityValue() {
-        guard titles.indices.contains(selectedIndex) else { return }
-        setAccessibilityValue(titles[selectedIndex])
-    }
-}
 
 @MainActor
 private final class PowerMetricChipView: NSVisualEffectView {    private let titleLabel = NSTextField(labelWithString: "")
@@ -1068,6 +905,13 @@ final class FrostedPowerFlowView: NSView {
         return trimmed.count > 7 ? String(trimmed.prefix(6)) + "…" : trimmed
     }
 
+    /// iPad 卡片只在图标下方显示电量数字；读不到时返回 nil，不画任何文字。
+    static func endpointBatteryText(for name: String, batteryPercent: Int?) -> String? {
+        guard endpointCaption(for: name) == "iPad" else { return nil }
+        guard let percent = batteryPercent, (0...100).contains(percent) else { return nil }
+        return "\(percent)%"
+    }
+
     /// The whole-Mac card expands when necessary so its outlet can contain the
     /// endpoint floor without compressing third-level modules into hairlines.
     static func requiredSystemCardHeight(for watts: [Double]) -> CGFloat {
@@ -1120,7 +964,7 @@ final class FrostedPowerFlowView: NSView {
         // intentional and keep its icon readable. A true zero-watt branch is
         // removed by `showsBatteryBranch(for:)` instead of being squeezed into
         // this visual floor.
-        let minimumBattery: CGFloat = 96
+        let minimumBattery: CGFloat = 120
         let minimumSystem = min(
             Design.maximumSystemCardHeight,
             max(72, minimumSystemHeight)
@@ -1797,14 +1641,38 @@ final class FrostedPowerFlowView: NSView {
         let symbolName = layout.kind == .battery ? batterySymbol : "powerplug.fill"
         let color: NSColor = layout.kind == .battery ? .systemGreen : .systemOrange
         let iconSize = Self.secondLevelIconSize(forCardHeight: layout.cardRect.height)
-        if let image = symbolImage(symbolName, pointSize: iconSize, color: color) {
+        guard let image = symbolImage(symbolName, pointSize: iconSize, color: color) else { return }
+        let card = layout.cardRect
+        guard layout.kind == .battery else {
             drawSymbol(
                 image,
-                centeredAt: NSPoint(x: layout.cardRect.midX, y: layout.cardRect.midY),
+                centeredAt: NSPoint(x: card.midX, y: card.midY),
                 maximumSize: iconSize,
                 rotated: layout.kind == .charger
             )
+            return
         }
+        // 充电受限分支里的电池节点同样保持「图标 + 百分比」上下排布。
+        drawSymbol(
+            image,
+            centeredAt: NSPoint(x: card.midX, y: card.midY + card.height * 0.16),
+            maximumSize: min(iconSize, card.width * 0.95),
+            rotated: false
+        )
+        let fontSize = max(16, min(32, card.height * 0.40))
+        drawText(
+            metrics.batteryPercent.map { "\($0)%" } ?? "—",
+            in: NSRect(
+                x: card.minX + 2,
+                y: card.minY + card.height * 0.10,
+                width: card.width - 4,
+                height: fontSize * 1.4
+            ),
+            font: roundedFont(size: fontSize, weight: .bold),
+            color: referenceTextColor,
+            alignment: .center,
+            shadow: false
+        )
     }
 
     private func drawInputRibbonLabel(_ layout: InputRibbonLayout) {
@@ -2140,13 +2008,22 @@ final class FrostedPowerFlowView: NSView {
         }
     }
 
+    /// 紧凑布局同样保持「图标在上、电量百分比在下」，避免只剩一个光秃秃的电池。
     private func drawCompactBatteryIcon() {
         let color = NSColor.systemGreen
         let symbol = symbolImage("battery.100percent.bolt", pointSize: 62, color: color)
             ?? symbolImage("battery.100percent", pointSize: 62, color: color)
         if let symbol {
-            drawSymbol(symbol, centeredAt: svgPoint(1177, 158), maximumSize: 67, rotated: false)
+            drawSymbol(symbol, centeredAt: svgPoint(1185, 148), maximumSize: 80, rotated: false)
         }
+        drawText(
+            metrics.batteryPercent.map { "\($0)%" } ?? "—",
+            in: svgRect(1105, 190, 160, 72),
+            font: roundedFont(size: 54, weight: .bold),
+            color: referenceTextColor,
+            alignment: .center,
+            shadow: false
+        )
     }
 
     private func drawCompactLaptopIcon() {
@@ -3078,14 +2955,40 @@ final class FrostedPowerFlowView: NSView {
             : "laptopcomputer"
         let color: NSColor = layout.kind == .battery ? .systemGreen : .systemBlue
         let iconSize = Self.secondLevelIconSize(forCardHeight: layout.cardRect.height)
-        if let image = symbolImage(symbolName, pointSize: iconSize, color: color) {
+        guard let image = symbolImage(symbolName, pointSize: iconSize, color: color) else { return }
+        let card = layout.cardRect
+        guard layout.kind == .battery else {
             drawSymbol(
                 image,
-                centeredAt: NSPoint(x: layout.cardRect.midX, y: layout.cardRect.midY),
+                centeredAt: NSPoint(x: card.midX, y: card.midY),
                 maximumSize: iconSize,
                 rotated: false
             )
+            return
         }
+        // 电池节点：图标在上、电量百分比在下，保持卡片尺寸与能量流不动。
+        // 电池符号本身是 2:1 的宽图标，按“卡片宽度”定尺寸，否则用高度会被压得很小。
+        drawSymbol(
+            image,
+            centeredAt: NSPoint(x: card.midX, y: card.midY + card.height * 0.19),
+            maximumSize: min(iconSize, card.width * 0.95),
+            rotated: false
+        )
+        let percent = metrics.batteryPercent.map { "\($0)%" } ?? "—"
+        let fontSize = max(16, min(32, card.height * 0.40))
+        drawText(
+            percent,
+            in: NSRect(
+                x: card.minX + 2,
+                y: card.minY + card.height * 0.10,
+                width: card.width - 4,
+                height: fontSize * 1.4
+            ),
+            font: roundedFont(size: fontSize, weight: .bold),
+            color: referenceTextColor,
+            alignment: .center,
+            shadow: false
+        )
     }
 
     private func drawMainRibbonLabel(_ layout: MainRibbonLayout) {
@@ -3128,6 +3031,45 @@ final class FrostedPowerFlowView: NSView {
         isOnlyOutput _: Bool
     ) {
         let symbolName = deviceSymbol(for: layout.output.name)
+        if let percentText = Self.endpointBatteryText(
+            for: layout.output.name,
+            batteryPercent: metrics.externalBatteryPercent
+        ) {
+            let card = layout.cardRect
+            let fontSize = min(36, max(22, card.height * 0.34))
+            let iconSize = min(Self.endpointIconSize(forCardHeight: card.height), card.height * 0.32)
+            if let image = symbolImage(symbolName, pointSize: iconSize, color: deviceColor(for: layout.output.name)) {
+                drawSymbol(
+                    image,
+                    centeredAt: NSPoint(x: card.midX, y: card.maxY - 10 - iconSize / 2),
+                    maximumSize: iconSize,
+                    rotated: false
+                )
+            }
+            drawText(
+                percentText,
+                in: NSRect(x: card.minX + 2, y: card.minY + 3, width: card.width - 4, height: fontSize * 1.35),
+                font: roundedFont(size: fontSize, weight: .bold),
+                color: referenceTextColor,
+                alignment: .center,
+                shadow: true
+            )
+            return
+        }
+        if Self.endpointCaption(for: layout.output.name) == "iPad" {
+            // 读不到电量：只画图标，不显示任何文字。
+            let card = layout.cardRect
+            let iconSize = min(Self.endpointIconSize(forCardHeight: card.height), card.height * 0.55)
+            if let image = symbolImage(symbolName, pointSize: iconSize, color: deviceColor(for: layout.output.name)) {
+                drawSymbol(
+                    image,
+                    centeredAt: NSPoint(x: card.midX, y: card.midY),
+                    maximumSize: iconSize,
+                    rotated: false
+                )
+            }
+            return
+        }
         let caption = Self.endpointCaption(for: layout.output.name)
         let iconSize = Self.endpointIconSize(forCardHeight: layout.cardRect.height)
         let captionOffset = min(25, max(18, layout.cardRect.height * 0.15))
@@ -4624,21 +4566,38 @@ final class FrostedPowerFlowView: NSView {
         return max(1, rect.height - radius * 2)
     }
 
-    private func deviceSymbol(for name: String) -> String {
+    /// 每种设备给一组备选 SF Symbol，按系统实际可用的第一个显示；
+    /// 接入的 iPad / iPhone / 手表 / 耳机 / 显示器会自动换成对应图标。
+    static func deviceSymbolCandidates(for name: String) -> [String] {
         let lower = name.lowercased()
-        if lower.contains("cpu") || lower.contains("芯片") {
-            return "cpu"
+        if lower.contains("cpu") || lower.contains("芯片") { return ["cpu"] }
+        if lower.contains("gpu") { return ["square.3.layers.3d.down.right"] }
+        if lower.contains("其他硬件") { return ["memorychip"] }
+        if lower.contains("进程") { return ["app.fill"] }
+        if lower.contains("ipad") { return ["ipad.gen2", "ipad", "rectangle.portrait"] }
+        if lower.contains("iphone") { return ["iphone.gen3", "iphone", "rectangle.portrait"] }
+        if lower.contains("display") || lower.contains("monitor") || lower.contains("显示器") {
+            return ["display", "desktopcomputer"]
         }
-        if lower.contains("gpu") { return "square.3.layers.3d.down.right" }
-        if lower.contains("其他硬件") { return "memorychip" }
-        if lower.contains("进程") { return "app.fill" }
-        if lower.contains("ipad") { return "ipad" }
-        if lower.contains("iphone") { return "iphone" }
-        if lower.contains("display") || lower.contains("monitor") || lower.contains("显示器") { return "display" }
-        if lower.contains("watch") { return "applewatch" }
-        if lower.contains("airpods") || lower.contains("耳机") { return "airpods" }
-        if lower.contains("hub") || lower.contains("dock") || lower.contains("扩展坞") { return "cable.connector" }
-        return "ellipsis"
+        if lower.contains("watch") { return ["applewatch", "applewatch.side.right", "clock"] }
+        if lower.contains("vision") || lower.contains("眼镜") { return ["visionpro", "goggles"] }
+        if lower.contains("airpods") || lower.contains("耳机") {
+            return ["airpods", "airpodspro", "headphones"]
+        }
+        if lower.contains("hub") || lower.contains("dock") || lower.contains("扩展坞") {
+            return ["cable.connector", "externaldrive.connected.to.line.below"]
+        }
+        return ["ellipsis"]
+    }
+
+    static func resolvedDeviceSymbol(for name: String) -> String {
+        deviceSymbolCandidates(for: name)
+            .first { NSImage(systemSymbolName: $0, accessibilityDescription: nil) != nil }
+            ?? "ellipsis"
+    }
+
+    private func deviceSymbol(for name: String) -> String {
+        Self.resolvedDeviceSymbol(for: name)
     }
 
     private func deviceColor(for name: String) -> NSColor {

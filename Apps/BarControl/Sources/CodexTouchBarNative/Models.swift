@@ -80,12 +80,18 @@ struct UsageAccount: Codable, Sendable {
     let accountLabel: String
     let providerLabel: String
     let isCurrent: Bool
+    let showByDefault: Bool?
+    let iconID: String?
     let isOfficial: Bool
     let metricKind: String
     let remainingBalance: Double?
     let balanceUnit: String?
     let remainingPercent: Double?
     let secondaryRemainingPercent: Double?
+    var primaryWindowLabel: String? = nil
+    var secondaryWindowLabel: String? = nil
+    var primaryResetAt: Double? = nil
+    var secondaryResetAt: Double? = nil
     let todayCost: Double
     let monthCost: Double
     let todayRequests: Int
@@ -106,12 +112,18 @@ struct UsageAccount: Codable, Sendable {
         case accountLabel = "account_label"
         case providerLabel = "provider_label"
         case isCurrent = "is_current"
+        case showByDefault = "show_by_default"
+        case iconID = "icon_id"
         case isOfficial = "is_official"
         case metricKind = "metric_kind"
         case remainingBalance = "remaining_balance"
         case balanceUnit = "balance_unit"
         case remainingPercent = "remaining_percent"
         case secondaryRemainingPercent = "secondary_remaining_percent"
+        case primaryWindowLabel = "primary_window_label"
+        case secondaryWindowLabel = "secondary_window_label"
+        case primaryResetAt = "primary_reset_at"
+        case secondaryResetAt = "secondary_reset_at"
         case todayCost = "today_cost"
         case monthCost = "month_cost"
         case todayRequests = "today_requests"
@@ -155,6 +167,10 @@ struct CodexSnapshot: Codable, Sendable {
 struct CodexStatusClient: Sendable {
     let helperURL: URL?
 
+    init(helperURL: URL) {
+        self.helperURL = helperURL
+    }
+
     init() {
         let manager = FileManager.default
         let candidates = [
@@ -165,7 +181,7 @@ struct CodexStatusClient: Sendable {
         helperURL = candidates.first { manager.isReadableFile(atPath: $0.path) }
     }
 
-    func fetch() async -> CodexSnapshot {
+    func fetch(timeout: TimeInterval = 20) async -> CodexSnapshot {
         guard let helperURL else { return .loading }
         return await Task.detached(priority: .utility) {
             let process = Process()
@@ -176,9 +192,16 @@ struct CodexStatusClient: Sendable {
             process.standardError = FileHandle.nullDevice
             do {
                 try process.run()
+                let watchdog = DispatchWorkItem {
+                    if process.isRunning { process.terminate() }
+                }
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: watchdog)
+                defer { watchdog.cancel() }
+                // Drain stdout while the helper runs: quota histories can exceed
+                // the pipe buffer, blocking both writer and waitUntilExit().
+                let data = output.fileHandleForReading.readDataToEndOfFile()
                 process.waitUntilExit()
                 guard process.terminationStatus == 0 else { return .loading }
-                let data = output.fileHandleForReading.readDataToEndOfFile()
                 return (try? JSONDecoder().decode(CodexSnapshot.self, from: data)) ?? .loading
             } catch {
                 return .loading

@@ -23,8 +23,27 @@ from typing import Any
 
 
 CODEX_DIR = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
-PROVIDER_STORE_DIR = Path.home() / "Library" / "Application Support" / "BarControl"
-CC_SWITCH_DB = PROVIDER_STORE_DIR / "provider-store.db"
+def _resolve_provider_store():
+    mode_file = Path.home() / "Library" / "Application Support" / "BarControl" / "backend-mode.json"
+    config: dict[str, Any] = {}
+    try:
+        config = json.loads(mode_file.read_text())
+    except Exception:
+        pass
+    mode = str(os.environ.get("BARCONTROL_PROVIDER_BACKEND") or config.get("providerBackend") or "auto").lower()
+    cc_dir = Path(str(config.get("ccSwitchDirectory") or "~/.cc-switch")).expanduser()
+    legacy_dir = Path(str(config.get("codexPlusPlusDirectory") or "~/Library/Application Support/BarControl")).expanduser()
+    if mode == "auto":
+        mode = "ccswitch" if (cc_dir / "cc-switch.db").exists() else "codexpp"
+    if mode == "custom":
+        database = Path(str(config.get("databasePath") or cc_dir / "cc-switch.db")).expanduser()
+        return database.parent, database.name
+    if mode == "ccswitch":
+        return cc_dir, "cc-switch.db"
+    return legacy_dir, "provider-store.db"
+
+PROVIDER_STORE_DIR, _PROVIDER_DB_NAME = _resolve_provider_store()
+CC_SWITCH_DB = PROVIDER_STORE_DIR / _PROVIDER_DB_NAME
 CODEX_AUTH_FILE = CODEX_DIR / "auth.json"
 CC_SWITCH_CODEX_OAUTH_FILE = PROVIDER_STORE_DIR / "codex-oauth-accounts.json"
 APP_DIR = Path.home() / "Library" / "Application Support" / "CodexTouchBar"
@@ -32,6 +51,12 @@ CC_SWITCH_USAGE_CACHE = APP_DIR / "provider-usage-cache.json"
 CC_SWITCH_USAGE_CACHE_SECONDS = 30
 AI_ACCOUNT_USAGE_CACHE = APP_DIR / "ai-account-usage-cache.json"
 AI_ACCOUNT_USAGE_CACHE_SECONDS = 60
+MAGPIE_DIR = Path.home() / ".config" / "magpie"
+MAGPIE_QUOTAS_FILE = MAGPIE_DIR / "quotas.json"
+MAGPIE_QUOTA_HISTORY_FILE = MAGPIE_DIR / "quota-history.json"
+MAGPIE_BALANCE_HISTORY_FILE = MAGPIE_DIR / "balance-history.json"
+MAGPIE_PROVIDERS_FILE = MAGPIE_DIR / "providers.json"
+MAGPIE_ROUTING_DIR = MAGPIE_DIR / "routing"
 STATE_DB = CODEX_DIR / "state_5.sqlite"
 RUNTIME_FILE = APP_DIR / "runtime.json"
 CONFIG_FILE = APP_DIR / "config.json"
@@ -627,6 +652,421 @@ def account_label(email: Any, account_id: str) -> str:
     return email if isinstance(email, str) and email else "ChatGPT · " + account_id[-4:]
 
 
+ZCODE_CONFIG_PATH = Path.home() / ".zcode" / "v2" / "config.json"
+ZCODE_SETTINGS_PATH = Path.home() / ".zcode" / "v2" / "setting.json"
+
+
+def zcode_selected_provider_id(settings: dict[str, Any]) -> str:
+    families = settings.get("modelProviderFamilySelectedKeys")
+    if isinstance(families, dict):
+        for value in families.values():
+            if isinstance(value, str) and value:
+                return value
+    return ""
+
+
+ZCODE_USAGE_CACHE = Path.home() / "Library" / "Application Support" / "CodexTouchBar" / "zcode-usage-cache.json"
+
+
+def _http_get_json(url: str, key: str, timeout: float = 6.0):
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", "ignore"))
+    except Exception:
+        return None
+
+
+def _load_zcode_usage_cache() -> dict[str, Any]:
+    try:
+        data = json.loads(ZCODE_USAGE_CACHE.read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_zcode_usage_cache(cache: dict[str, Any]) -> None:
+    try:
+        ZCODE_USAGE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        ZCODE_USAGE_CACHE.write_text(json.dumps(cache))
+    except Exception:
+        pass
+
+
+def zcode_provider_usage(provider_id: str, host: str, key: str, now: float) -> dict[str, Any]:
+    """按主机类型查询 ZCode 供应商余额/用量（DeepSeek / New API 系）。
+
+    同步策略对齐 CC Switch：低频定时 + 结果缓存，30 分钟一次，失败立即重试不缓存。
+    """
+    cache = _load_zcode_usage_cache()
+    entry = cache.get(provider_id)
+    if isinstance(entry, dict) and now - float(entry.get("queried_at") or 0) < 1800:
+        return entry
+    result: dict[str, Any] = {"queried_at": now}
+    try:
+        if host == "api.deepseek.com":
+            data = _http_get_json(f"https://{host}/user/balance", key)
+            infos = (data or {}).get("balance_infos") or []
+            if infos:
+                result = {
+                    "remaining_balance": safe_float(infos[0].get("total_balance")),
+                    "balance_unit": infos[0].get("currency") or "CNY",
+                    "metric_kind": "balance",
+                    "queried_at": now,
+                }
+        else:
+            # New API 系（jojocode 等 OpenAI 中转面板）：/api/usage/token
+            data = _http_get_json(f"https://{host}/api/usage/token", key)
+            payload = (data or {}).get("data") if isinstance((data or {}).get("data"), dict) else {}
+            if payload:
+                total_used = safe_float(payload.get("total_used"))
+                unlimited = bool(payload.get("unlimited_quota"))
+                granted = safe_float(payload.get("total_granted"))
+                if not unlimited and granted > 0:
+                    dollars = max(0.0, (granted - total_used) / 500000.0)
+                    result = {
+                        "remaining_balance": round(dollars, 2),
+                        "balance_unit": "USD",
+                        "metric_kind": "balance",
+                        "queried_at": now,
+                    }
+                else:
+                    result = {
+                        "remaining_balance": None,
+                        "balance_unit": "USD",
+                        "metric_kind": "cost",
+                        "queried_at": now,
+                    }
+    except Exception:
+        pass
+    # 只缓存成功结果；失败的下次刷新立即重试，避免瞬时故障污染缓存。
+    if len(result) > 1:
+        cache[provider_id] = result
+        _save_zcode_usage_cache(cache)
+    return result
+
+
+def zcode_snapshot(now: float | None = None) -> list[dict[str, Any]]:
+    """读取 ZCode（~/.zcode/v2）的供应商配置，映射为 AI Coding 平台账号。"""
+    try:
+        config = json.loads(ZCODE_CONFIG_PATH.read_text())
+    except Exception:
+        return []
+    providers = config.get("provider")
+    if not isinstance(providers, dict):
+        return []
+    settings: dict[str, Any] = {}
+    try:
+        settings = json.loads(ZCODE_SETTINGS_PATH.read_text())
+    except Exception:
+        pass
+    selected_key = zcode_selected_provider_id(settings)
+    query_now = float(now or time.time())
+    accounts: list[dict[str, Any]] = []
+    for provider_id, provider in providers.items():
+        if not isinstance(provider, dict):
+            continue
+        if provider.get("enabled") is False:
+            continue
+        options = provider.get("options") if isinstance(provider.get("options"), dict) else {}
+        base_url = str(options.get("baseURL") or "")
+        host_match = re.search(r"https?://([^/]+)", base_url)
+        host = host_match.group(1) if host_match else ""
+        is_current = bool(selected_key) and (selected_key == provider_id or selected_key.endswith(provider_id))
+        name = str(provider.get("name") or provider_id)
+        models = provider.get("models")
+        model_names = list(models.keys()) if isinstance(models, dict) else []
+        kind = str(provider.get("kind") or "")
+        usage = zcode_provider_usage(provider_id, host, str(options.get("apiKey") or ""), query_now) if host and options.get("apiKey") else {}
+        metric_kind = usage.get("metric_kind") or "cost"
+        accounts.append({
+            "key": f"zcode:provider:{provider_id}", "client_id": "zcode", "client_label": "ZCode",
+            "account_label": name, "provider_label": host or "ZCode",
+            "is_current": is_current, "is_official": False, "metric_kind": metric_kind,
+            "remaining_balance": usage.get("remaining_balance"), "balance_unit": usage.get("balance_unit") or "USD",
+            "remaining_percent": None, "secondary_remaining_percent": None,
+            "today_cost": 0.0, "month_cost": 0.0, "today_requests": 0, "today_tokens": 0,
+            "cache_hit_percent": None, "success_percent": None,
+            "model_label": ", ".join(model_names[:2]),
+            "metrics_scope": f"ZCode · {kind}".strip(),
+            "chart_title": "暂无用量", "chart_unit": "USD",
+            "latest_at": float(usage.get("queried_at") or 0), "history": [],
+        })
+    # 当前使用的供应商排最前，保证截断后仍可见
+    accounts.sort(key=lambda item: 0 if item.get("is_current") else 1)
+    return accounts
+
+
+def _magpie_identity(key: Any, separator: str) -> tuple[str, str] | None:
+    if not isinstance(key, str) or separator not in key:
+        return None
+    provider, account = key.split(separator, 1)
+    return (provider, account) if provider else None
+
+
+def _magpie_points(rows: Any, field: str) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    points = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        value = safe_float(row.get(field))
+        timestamp = parse_time(row.get("at"))
+        if value is not None and timestamp > 0:
+            if field == "left":
+                value = max(0.0, min(100.0, value))
+            points.append({"timestamp": timestamp, "primary": value, "secondary": None})
+    return sorted(points, key=lambda point: point["timestamp"])
+
+
+def _magpie_routing_state(
+    known_identities: set[tuple[str, str]],
+) -> tuple[tuple[str, str] | None, dict[tuple[str, str], str]]:
+    """Return the latest successful route handled by one of the known accounts, plus route icons.
+
+    Routes served by providers without a balance record (for example agentrouter)
+    are skipped so the highlight does not flicker on and off.
+    """
+    day = datetime.now().astimezone().strftime("%Y-%m-%d")
+    rows = tail_json(MAGPIE_ROUTING_DIR / f"{day}.jsonl", max_bytes=4 * 1024 * 1024)
+    icons: dict[tuple[str, str], str] = {}
+    current: tuple[str, str] | None = None
+    for route in reversed(rows):
+        for item in route.get("order") or []:
+            if not isinstance(item, dict):
+                continue
+            provider = item.get("provider")
+            icon = item.get("icon")
+            if isinstance(provider, str) and isinstance(icon, str) and icon:
+                icons.setdefault((provider, str(item.get("who") or "")), icon)
+        if current is not None:
+            continue
+        if not route.get("done") or not isinstance(route.get("status"), int) or not 200 <= route["status"] < 300:
+            continue
+        selected = next(
+            (
+                item for item in reversed(route.get("tries") or [])
+                if isinstance(item, dict) and item.get("done")
+                and isinstance(item.get("status"), int) and 200 <= item["status"] < 300
+            ),
+            None,
+        )
+        if not selected:
+            continue
+        allocation = next(
+            (
+                item for item in route.get("order") or []
+                if isinstance(item, dict) and item.get("id") == selected.get("id")
+            ),
+            None,
+        )
+        if allocation and isinstance(allocation.get("provider"), str):
+            candidate = (allocation["provider"], str(allocation.get("who") or ""))
+            if candidate in known_identities:
+                current = candidate
+            else:
+                folded = {identity: identity for identity in known_identities}
+                current = next(
+                    (
+                        identity for identity in folded
+                        if identity[0] == candidate[0] and identity[1].casefold() == candidate[1].casefold()
+                    ),
+                    None,
+                )
+    return current, icons
+
+
+def magpie_snapshot() -> list[dict[str, Any]]:
+    """Expose every Magpie account with a current balance or remaining quota."""
+    quotas = read_json(MAGPIE_QUOTAS_FILE, {})
+    quota_history = read_json(MAGPIE_QUOTA_HISTORY_FILE, {})
+    balance_history = read_json(MAGPIE_BALANCE_HISTORY_FILE, {})
+    if not isinstance(quotas, dict):
+        quotas = {}
+    if not isinstance(quota_history, dict):
+        quota_history = {}
+    if not isinstance(balance_history, dict):
+        balance_history = {}
+    provider_config = read_json(MAGPIE_PROVIDERS_FILE, {})
+    provider_rows = provider_config.get("providers") if isinstance(provider_config, dict) else []
+    provider_rows = provider_rows if isinstance(provider_rows, list) else []
+    provider_icons = {
+        item["id"]: item["icon"]
+        for item in provider_rows
+        if isinstance(item, dict) and isinstance(item.get("id"), str) and isinstance(item.get("icon"), str)
+    }
+
+    records: dict[tuple[str, str], dict[str, Any]] = {}
+    for source_key, entry in quotas.items():
+        identity = _magpie_identity(source_key, "/")
+        if identity is None or not isinstance(entry, dict):
+            continue
+        quota = entry.get("quota")
+        records[identity] = {
+            "at": parse_time(entry.get("at") or (quota.get("readAt") if isinstance(quota, dict) else None)),
+            "quota": quota if isinstance(quota, dict) else {},
+            "quota_history": {},
+            "balance_points": [],
+        }
+
+    def resolve_identity(identity: tuple[str, str]) -> tuple[str, str]:
+        provider, account = identity
+        if account:
+            return identity
+        matches = [candidate for candidate in records if candidate[0] == provider]
+        return matches[0] if len(matches) == 1 else identity
+
+    for source_key, windows in quota_history.items():
+        identity = _magpie_identity(source_key, "|")
+        if identity is None or not isinstance(windows, dict):
+            continue
+        identity = resolve_identity(identity)
+        record = records.setdefault(identity, {
+            "at": 0.0, "quota": {}, "quota_history": {}, "balance_points": [],
+        })
+        record["quota_history"] = windows
+
+    for source_key, rows in balance_history.items():
+        identity = _magpie_identity(source_key, "|")
+        if identity is None:
+            continue
+        identity = resolve_identity(identity)
+        record = records.setdefault(identity, {
+            "at": 0.0, "quota": {}, "quota_history": {}, "balance_points": [],
+        })
+        record["balance_points"] = _magpie_points(rows, "amount")
+
+    current_identity, route_icons = _magpie_routing_state(set(records))
+
+    labels = {
+        "codex": "Codex", "workbuddy": "WorkBuddy", "zcode": "ZCode",
+        "openrouter": "OpenRouter", "agentrouter": "AgentRouter",
+        "volcengine": "Volcengine", "teamorouter": "TeamoRouter",
+        "gemini": "Gemini", "ollama": "Ollama",
+    }
+    accounts = []
+    for (provider, account), record in records.items():
+        quota = record["quota"]
+        windows = quota.get("windows")
+        windows = [item for item in windows if isinstance(item, dict)] if isinstance(windows, list) else []
+        histories = record["quota_history"]
+        history_names = [name for name, rows in histories.items() if isinstance(rows, list)]
+        preferred = {"5 hours": 0, "7 days": 1, "30 days": 2}
+        history_names.sort(key=lambda name: (preferred.get(name, 3), name))
+
+        remaining_values: list[tuple[str, float]] = []
+        series_points: dict[str, list[dict[str, Any]]] = {}
+        for name in history_names:
+            rows = histories[name]
+            left_points = _magpie_points(rows, "left")
+            if left_points:
+                series_points[name] = left_points
+                remaining_values.append((name, left_points[-1]["primary"]))
+
+        window_by_name = {str(item.get("name") or ""): item for item in windows}
+        for name, window in window_by_name.items():
+            if any(history_name == name for history_name, _ in remaining_values):
+                continue
+            amount = safe_float(window.get("amount"))
+            limit = safe_float(window.get("limit"))
+            used = safe_float(window.get("used"))
+            if amount is not None and limit is not None and limit > 0:
+                remaining_values.append((name, max(0.0, min(100.0, amount / limit * 100.0))))
+            elif used is not None:
+                remaining_values.append((name, max(0.0, min(100.0, 100.0 - used))))
+        remaining_values.sort(key=lambda item: (preferred.get(item[0], 3), item[0]))
+
+        balance_points = record["balance_points"]
+        remaining_balance = balance_points[-1]["primary"] if balance_points else None
+        balance_unit = "USD" if remaining_balance is not None else None
+        for window in windows:
+            amount = safe_float(window.get("amount"))
+            if amount is not None and remaining_balance is None:
+                remaining_balance = amount
+                balance_unit = str(window.get("unit") or "USD")[:12]
+                break
+
+        if not remaining_values and remaining_balance is None:
+            continue
+        if remaining_balance == 0:
+            continue
+
+        remaining_percent = remaining_values[0][1] if remaining_values else None
+        primary_window_name = remaining_values[0][0] if remaining_values else None
+        secondary_window = next(
+            ((name, value) for name, value in remaining_values if name == "7 days" and name != primary_window_name),
+            None,
+        )
+        secondary_percent = secondary_window[1] if secondary_window else None
+        secondary_window_name = secondary_window[0] if secondary_window else None
+        window_labels = {"5 hours": "5h", "7 days": "7d", "30 days": "30d"}
+        primary_window = window_by_name.get(primary_window_name or "", {})
+        secondary_window_data = window_by_name.get(secondary_window_name or "", {})
+        primary_reset_value = primary_window.get("resetsAt")
+        secondary_reset_value = secondary_window_data.get("resetsAt")
+        primary_reset_at = parse_time(primary_reset_value) or None if isinstance(primary_reset_value, str) else None
+        secondary_reset_at = parse_time(secondary_reset_value) or None if isinstance(secondary_reset_value, str) else None
+        if balance_points:
+            chart_history = balance_points[-96:]
+            chart_title, chart_unit = "余额趋势", balance_unit or "USD"
+        else:
+            chart_name = next(iter(series_points), "")
+            chart_history = series_points.get(chart_name, [])[-96:]
+            chart_title = f"额度趋势 · {chart_name}" if chart_name else "额度趋势"
+            chart_unit = "percent" if chart_history and chart_name in histories else (balance_unit or "percent")
+
+        quota_name = str(quota.get("name") or "")
+        account_name = account if account and not account.startswith("balance ") else quota_name or "余额"
+        provider_name = labels.get(provider, provider.replace("-", " ").title())
+        account_label = f"{provider_name} · {account_name}"[:80]
+        plan = str(quota.get("plan") or "")
+        provider_label = plan or provider_name
+        route_icon = route_icons.get((provider, account))
+        if route_icon is None:
+            route_icon = next(
+                (icon for (route_provider, route_account), icon in route_icons.items()
+                 if route_provider == provider and route_account.casefold() == account.casefold()),
+                None,
+            )
+        icon_id = str(quota.get("icon") or route_icon or provider_icons.get(provider) or provider)
+        model_label = ", ".join(history_names[:3])
+        latest_at = max(
+            [record["at"]]
+            + [point["timestamp"] for point in balance_points]
+            + [point["timestamp"] for points in series_points.values() for point in points]
+        )
+        accounts.append({
+            "key": f"magpie:{provider}:{account or 'balance'}",
+            "client_id": "magpie",
+            "client_label": "Magpie",
+            "account_label": account_label,
+            "provider_label": provider_label,
+            "icon_id": icon_id,
+            "is_current": (provider, account) == current_identity,
+            "show_by_default": True,
+            "is_official": provider == "codex",
+            "metric_kind": "balance" if remaining_balance is not None else "subscription",
+            "remaining_balance": remaining_balance,
+            "balance_unit": balance_unit,
+            "remaining_percent": remaining_percent,
+            "secondary_remaining_percent": secondary_percent,
+            "primary_window_label": window_labels.get(primary_window_name, primary_window_name),
+            "secondary_window_label": window_labels.get(secondary_window_name, secondary_window_name),
+            "primary_reset_at": primary_reset_at,
+            "secondary_reset_at": secondary_reset_at,
+            "today_cost": 0.0, "month_cost": 0.0,
+            "today_requests": 0, "today_tokens": 0,
+            "cache_hit_percent": None, "success_percent": None,
+            "model_label": model_label,
+            "metrics_scope": f"Magpie · {plan}".strip(" ·"),
+            "chart_title": chart_title, "chart_unit": chart_unit,
+            "latest_at": latest_at, "history": chart_history,
+        })
+    accounts.sort(key=lambda item: (0 if item["is_current"] else 1, item["client_label"], item["account_label"]))
+    return accounts
+
+
 def cc_switch_snapshot(
     db_path: Path = CC_SWITCH_DB,
     now: float | None = None,
@@ -716,6 +1156,7 @@ def cc_switch_snapshot(
 
     labels = {
         "claude": "Claude", "claude-desktop": "Claude Desktop", "codex": "Codex",
+        "zcode": "ZCode",
         "gemini": "Gemini", "grokbuild": "Grok", "opencode": "OpenCode",
         "openclaw": "OpenClaw", "hermes": "Hermes", "pi": "Pi",
     }
@@ -757,6 +1198,8 @@ def cc_switch_snapshot(
     for managed in managed_accounts:
         account_id = managed["account_id"]
         is_current = live_auth.get("account_id") == account_id
+        if not is_current:
+            continue  # ChatGPT 平台只显示当前在用的账号
         quota = active_quota if is_current and active_quota else cached_account_quota(account_id)
         aggregate_key = ("codex", "_codex_session")
         daily = today.get(aggregate_key, {}) if is_current else {}
@@ -790,14 +1233,15 @@ def cc_switch_snapshot(
     for provider in providers:
         app_type = provider.get("app_type") or ""
         provider_id = provider.get("id") or ""
-        if app_type not in visible_apps or not provider_id:
+        if not provider_id:
             continue
         is_official = provider.get("category") == "official"
         if app_type == "codex" and is_official and live_auth:
             continue
+        if app_type == "codex" and not provider.get("is_current"):
+            continue  # ChatGPT/Codex 平台只显示当前在用的供应商
         key = (app_type, provider_id)
-        if is_official and not provider.get("is_current") and key not in month:
-            continue
+        # 官方非当前的条目也进快照（菜单里列出、默认不勾选），由 Swift 层控制展示
         daily = today.get(key, {})
         monthly = month.get(key, {})
         remote = {} if is_official else (cached_provider_usage(provider, timestamp) or {})
@@ -844,6 +1288,17 @@ def cc_switch_snapshot(
                 "latest_at": account["latest_at"], "remaining_balance": remaining_balance,
                 "balance_unit": remote.get("balance_unit"),
             })
+
+    zcode_accounts = zcode_snapshot(timestamp)
+    accounts.extend(zcode_accounts)
+    if zcode_accounts:
+        legacy.append({
+            "id": "zcode", "label": "ZCode", "provider": "",
+            "today_cost": 0.0, "month_cost": 0.0,
+            "today_requests": 0, "today_tokens": 0,
+            "daily_limit": None, "monthly_limit": None,
+            "latest_at": 0.0, "remaining_balance": None, "balance_unit": None,
+        })
 
     order = {name: index for index, name in enumerate(labels)}
     accounts.sort(key=lambda item: order.get(item["client_id"], 99))
@@ -909,7 +1364,12 @@ def snapshot() -> dict[str, Any]:
         label = f"○ 空闲 {limit_text}"
         state = "idle"
 
-    usage = cc_switch_snapshot(limits=newest_limits[1] if newest_limits else None)
+    magpie_accounts = magpie_snapshot()
+    usage = (
+        {"platforms": [], "accounts": magpie_accounts}
+        if magpie_accounts
+        else cc_switch_snapshot(limits=newest_limits[1] if newest_limits else None)
+    )
     return {
         "label": label,
         "state": state,

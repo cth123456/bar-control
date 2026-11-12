@@ -15,11 +15,13 @@ struct USBDeviceDescriptor: Equatable, Sendable {
     let name: String
     let locationID: UInt32
     let batteryPercent: Int?
+    let serial: String?
 
-    init(name: String, locationID: UInt32, batteryPercent: Int? = nil) {
+    init(name: String, locationID: UInt32, batteryPercent: Int? = nil, serial: String? = nil) {
         self.name = name
         self.locationID = locationID
         self.batteryPercent = batteryPercent
+        self.serial = serial
     }
 }
 
@@ -27,6 +29,7 @@ struct ProcessPowerSample: Equatable, Sendable {
     let name: String
     /// Best-effort watts derived from macOS' per-process billed-energy counter.
     let billedWatts: Double
+    var pid: Int32? = nil
 }
 
 struct HardwarePowerSample: Equatable, Sendable {
@@ -43,6 +46,8 @@ struct HardwarePowerSample: Equatable, Sendable {
 
 struct SystemMetrics: Equatable, Sendable {
     let externalPower: Bool
+    /// Firmware charging status is independent of instantaneous net battery power.
+    let batteryIsCharging: Bool?
     let adapterLimitWatts: Double?
     /// Live power entering the Mac from the selected charger.
     let inputWatts: Double?
@@ -82,9 +87,11 @@ struct SystemMetrics: Equatable, Sendable {
         processPower: [ProcessPowerSample] = [],
         fanRPMs: [Double] = [],
         gpuTemperature: Double? = nil,
-        externalBatteryPercent: Int? = nil
+        externalBatteryPercent: Int? = nil,
+        batteryIsCharging: Bool? = nil
     ) {
         self.externalPower = externalPower
+        self.batteryIsCharging = batteryIsCharging
         self.adapterLimitWatts = adapterLimitWatts
         self.inputWatts = inputWatts
         self.inputVoltage = inputVoltage
@@ -349,6 +356,10 @@ struct SystemMetrics: Equatable, Sendable {
         return max(0, batteryWatts)
     }
 
+    var showsChargingIndicator: Bool {
+        externalPower && (batteryIsCharging ?? (batteryChargeWatts > 0.1))
+    }
+
     var sourceWatts: Double? {
         if externalPower {
             return inputWatts ?? systemWatts
@@ -406,9 +417,10 @@ enum SystemMetricsReader {
         let fanRPMs = readFanRPMs()
         let gpuTemperature = readGPUTemperature()
         let devices = usbDevices()
-        let externalBatteryPercent = devices
-            .first(where: { isExternalBatteryDevice($0.name) && $0.batteryPercent != nil })?
-            .batteryPercent
+        let iPads = devices.filter { $0.name.lowercased().contains("ipad") }
+        let registryBatteryPercent = iPads.count == 1 ? iPads.first?.batteryPercent : nil
+        let externalBatteryPercent = ExternalBatterySampler.shared.read(devices: devices)
+            ?? registryBatteryPercent
 
         return SystemMetrics(
             externalPower: externalPower,
@@ -431,7 +443,8 @@ enum SystemMetricsReader {
             processPower: hardwarePower.processes,
             fanRPMs: fanRPMs,
             gpuTemperature: gpuTemperature,
-            externalBatteryPercent: externalBatteryPercent
+            externalBatteryPercent: externalBatteryPercent,
+            batteryIsCharging: boolean(battery["IsCharging"])
         )
     }
 
@@ -501,7 +514,9 @@ enum SystemMetricsReader {
             return USBDeviceDescriptor(
                 name: friendlyDeviceName(rawName),
                 locationID: locationID,
-                batteryPercent: batteryPercent(from: properties)
+                batteryPercent: batteryPercent(from: properties),
+                serial: (properties["kUSBSerialNumberString"] as? String)
+                    ?? (properties["USB Serial Number"] as? String)
             )
         }
     }
@@ -662,7 +677,8 @@ final class PowerTelemetrySampler: @unchecked Sendable {
             guard watts.isFinite, watts >= 0.001 else { return nil }
             return ProcessPowerSample(
                 name: String(cString: rawName),
-                billedWatts: watts
+                billedWatts: watts,
+                pid: bcpt_sampler_process_pid(sampler, Int32(index))
             )
         }
         return HardwarePowerSample(
@@ -765,6 +781,19 @@ final class PowerRunnerButton: NSButton {
         window == nil ? stopAnimating() : startAnimating()
     }
 
+    /// 触摸/点击时通知外部（用于 Touch Bar 自动提亮）。
+    var onInteraction: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onInteraction?()
+        super.mouseDown(with: event)
+    }
+
+    override func touchesBegan(with event: NSEvent) {
+        onInteraction?()
+        super.touchesBegan(with: event)
+    }
+
     func startAnimating() {
         guard animationTimer == nil, frames.count > 1 else { return }
         isAnimating = true
@@ -815,7 +844,7 @@ final class PowerRunnerButton: NSButton {
             ?? "\(style.title) · 整机功率读取中，点击查看详细信息"
     }
 
-    private static func tintColor(for watts: Double?) -> NSColor {
+    static func tintColor(for watts: Double?) -> NSColor {
         guard let watts else { return .secondaryLabelColor }
         switch watts {
         case ..<25: return .systemGreen

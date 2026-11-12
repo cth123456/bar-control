@@ -412,6 +412,15 @@ enum InterfaceDetailContent {
 @MainActor
 final class FlippedContainerView: NSView {
     override var isFlipped: Bool { true }
+
+    /// frame 排版的直接子视图自动跟随容器宽度；Auto Layout 子视图保持原样。
+    /// 不再手算宽度差，避免文档视图缩到 0 时把卡片宽度永久压缩。
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        if subview.translatesAutoresizingMaskIntoConstraints {
+            subview.autoresizingMask.insert(.width)
+        }
+    }
 }
 
 // MARK: - Window
@@ -453,12 +462,25 @@ final class InterfaceDetailWindowController: NSObject, NSWindowDelegate {
     }
 
     private func makeScrollableContent(specs: InterfaceSpecs, metrics: SystemMetrics) -> NSView {
+        let root = WindowPageView(frame: NSRect(x: 0, y: 0, width: 524, height: 660))
+        let header = WindowDesign.header(
+            title: "接口与线缆",
+            subtitle: "充电器、USB-C 端口与线缆规格",
+            symbol: "cable.connector",
+            accent: .systemBlue
+        )
+        header.frame = NSRect(x: 24, y: 22, width: 476, height: 48)
+        header.autoresizingMask = [.width]
+        root.addSubview(header)
         let content = InterfaceDetailContent.makeView(specs: specs, metrics: metrics)
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .windowBackgroundColor
+        scrollView.drawsBackground = false
+        scrollView.backgroundColor = .clear
         scrollView.documentView = content
+        scrollView.frame = NSRect(x: 24, y: 84, width: 476, height: 552)
+        scrollView.autoresizingMask = [.width, .height]
+        root.addSubview(scrollView)
         content.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             content.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
@@ -466,6 +488,6 @@ final class InterfaceDetailWindowController: NSObject, NSWindowDelegate {
             content.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
             content.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
         ])
-        return scrollView
+        return root
     }
 }

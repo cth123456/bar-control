@@ -1,18 +1,19 @@
-# Bar Control 0.17.0（原生 Swift 版）
+# Bar Control 0.40.6（原生 Swift 版）
 
-这是一个独立的 macOS 菜单栏 App，不调用、不启动、也不依赖 BetterTouchTool。
+这是一个独立的 macOS 菜单栏 App，不调用、不启动、也不依赖 BetterTouchTool。下载 Release 中的 `BarControl-版本号.zip` 后解压并将 App 移到“应用程序”即可。Touch Bar、AI coding、能源流、电源策略、系统监控、Touch Bar 亮度和菜单栏工具均包含在主 App 中，不需要按模块分别下载。
 
 主层默认布局：
 
-- 动态随航、`AI coding`、系统监控、本地语音助手
-- 随航空闲时保持紧凑深灰色；操作时在当前层展开，变蓝并显示四帧转动进度；成功变绿、失败变红后再缩回
+- 动态随航、`AI coding`、系统监控
+- 展开菜单不再放“关于”入口（设置窗口侧栏仍保留）；“是否在此应用让位”以小字号次级样式、26pt 紧凑行高与主模块分隔，避免和模块列表混在一起
+- 设置窗口侧栏采用固定图标槽：每个图标等比缩放到 14pt 字形后再居中放进 18×18 槽位，标题文字固定从同一 x 起点开始，避免窄图标显小或宽图标把文字挤开
+- 随航空闲时保持紧凑深灰色；操作时在当前层展开，变蓝并显示四帧转动进度；成功变绿、失败变红，结果页至少完整展示 2.5 秒后再缩回双向默认态
 - `AI coding` 保持紧凑蓝色胶囊，图标颜色表示 Codex 状态
-- 本地模型空闲时只显示语音图标；运行时固定为紧凑 82pt，用“说话、识别、本地、云端、准备、播放”短词配合颜色与图标换帧，RunCat 不会再被自动展开遮挡
 - 整机监控在主层只显示一个 RunCat 风格动画，不再显示 `M70 / G53` 一类缩写；动画速度由整机实时功率驱动，颜色随功率从绿色、青色变为橙色、红色
 
 菜单栏“更多操作 → Touch Bar 动图”可以即时切换跑猫、咖啡、跑狗、水滴、引擎、麻薯、牛顿摆和史莱姆；选择会保存到下次启动，不再需要单独安装 RunCat。
 
-菜单栏“更多操作 → Touch Bar 保持最亮”默认开启。App 使用系统 `DFRBrightness` 的真实调光档位 1，仅在 Touch Bar 已点亮时校正亮度，不会在屏幕休眠后反复唤醒面板。关闭开关后，App 停止干预，亮度重新交由系统后续的空闲调光流程管理。
+菜单栏“Touch Bar 设置 → Touch Bar 自动亮度”默认开启：使用 Mac 键鼠或 Touch Bar 时将实际背光维持在 100%，两边都空闲 15 秒后回落到 80%。只在 Touch Bar 已点亮、未锁屏时校正，每秒检查一次；关闭后停止干预。
 
 主层、AI coding 详情层和整机详情层都从系统关闭按钮后方开始向左排列，不再把整块容器设置为会被 AppKit 强制居中的 principal item。组件内部顺序仍按“自定义 Touch Bar 组件…”保存的设置排列。
 
@@ -37,11 +38,15 @@ GPU 显示为 IORegistry 每秒采集的瞬时占用，综合设备、渲染器�
 - 用上下箭头改变排列位置
 - 一键恢复默认布局
 
+保存后的六槽布局是唯一权威来源；启动、菜单重建和 Touch Bar 自愈都不会插入模块、补齐空槽或重排。只有主动点「恢复默认布局」或在自定义面板中修改时才会写入新布局。若某模块对应软件暂时不可用，原槽位会被保留，软件恢复后自动回到原位置。
+
 点击 `AI coding` 进入二级层：
 
 - 最左侧返回按钮
 - 只显示当前、已管理或本月有用量的客户端；每个平台只显示一次真实软件图标，后面的账户/供应商按 CC Switch 名称排列
 - Codex 可同时显示 CC Switch 管理的 ChatGPT 账号和 API 供应商；余额与单位沿用 CC Switch 的用量查询口径
+- Magpie 供应商按紧凑双行卡显示配额窗口（如 Codex 的 5h / 7d），包含剩余比例与重置时间；其他账户显示余额。拖动供应商图标可调整顺序，拖动卡片内容可横向浏览。布局参考 [CodexBar](https://github.com/wjx8/CodexBar)（MIT）的 `TouchBarRateLimitsView` / `SegmentedBatteryBar`，只借鉴信息排布，没有复制其代码或素材
+- AI coding 主图标在运行时以动态进度环显示活动任务数，刚完成 / 中止时短暂显示结果标记；现有任务快照没有每个任务的完成百分比
 - 点击账户进入三级详情层，显示真实近 7 日用量折线、缓存命中率、请求成功率、近期模型和请求数；不足两个不同样本时显示“等待变化”，不绘制误导性的水平直线
 - 只显示正在运行的 Codex 任务，最多五项；空闲时不显示说明文字；点击可打开对应任务
 
@@ -52,8 +57,6 @@ App 同时保留两个唤回入口：Touch Bar 的 Control Strip 图标和始终
 八套共 50 帧动画素材来自 [RunCat Neo](https://github.com/runcat-dev/RunCatNeo)，按 Apache License 2.0 使用；完整许可与改动说明随 App 打包在 `Contents/Resources/ThirdParty`。
 
 逐端口 USB-C 遥测实现参考了开源项目 [WhatPort](https://github.com/darrylmorley/whatport) 与 [macpow](https://github.com/k06a/macpow) 对 macOS IOKit/USB-PD 字段的公开验证，代码在本项目中独立实现，没有引入它们作为运行时依赖。
-
-本地模型通过 `~/Library/Application Support/LocalSiriLLM/touchbar-state.tsv` 向原生 App 发布阶段，不再调用或启动 BetterTouchTool。活动期间再次点击同一模块会取消准备、录音、识别、推理、朗读和播放。
 
 ## 远程 Codex
 
@@ -119,9 +122,47 @@ iPhone 客户端源码位于相邻目录 `../BarControlRemote`。Mac 与 iPhone 
 
 注意：CHIE 写入在部分新固件上可能被拒绝（安装脚本的 `probe` 会直接告诉你结果）。若被拒绝，“优先放电”退回到系统 80% 上限行为，不会产生副作用。
 
+该 helper 已包含在主 App 包内，正常下载和使用不需要单独下载文件。只有用户主动使用“优先放电”并接受管理员授权时才安装到系统；卸载请运行 `./uninstall-power-helper.command`，或在设置中卸载该组件。helper 无独立界面，也不提供额外功能入口。
+
 ## Touch Bar 亮度
 
-macOS 没有公开的 Touch Bar 面板亮度 API，但系统私有 `DFRBrightnessClient` 在当前机型上提供真实的 OLED 调光档位。App 默认把已点亮的 Touch Bar 保持在最亮档 1；每 5 秒仅在档位被系统改低时校正一次，不会在 Touch Bar 已关闭或整机休眠时唤醒它。可在“更多操作 → Touch Bar 保持最亮”随时关闭。
+`getDimmingStep == 0` 只表示未施加额外空闲调暗，不能代表实际背光已达最高。本机实测：旧接口报告 0 档时，CoreBrightness 的 `DisplayBrightness` 为 0，驱动 `CurrentNits` 约 12；将实际亮度临时设置到 1.0 后，回读约 0.991 / 357 nit。
+
+现通过 HID 的 `TouchBarUserDevice` 绑定 Touch Bar display ID，再使用 CoreBrightness 的绝对亮度接口，只操作该显示器。活跃时目标 1.0，Mac 与触控栏都空闲 15 秒后目标 0.8，允许 0.015 的硬件量化误差。写入使用 `Commit = NO`，不改系统自动亮度偏好；熄屏或锁屏时不写入。关闭自动亮度后停止持续校正，由系统恢复控制。日志同时记录 display ID、目标亮度、实际回读和驱动 nit 值。
+
+接口参考开源 [TouchBarFloor](https://github.com/volpierre/TouchBarFloor) 和 [TouchBarController](https://github.com/skimmilk/TouchBarController)，均为 MIT；授权文件保存在 `Resources/TouchBarBrightness-LICENSE.txt` 并随 App 资源分发。私有接口在不支持的系统上会安全返回不可用，保留旧调光兼容路径。
+
+## Touch Bar 常驻与让位
+
+有线 iPad 电量通过已信任的 MobileDevice 会话每 10 秒只读采样，按 USB 序列号匹配，不主动配对或弹出信任提示。「优先充电」或「优先放电」期间，正在受电的 iPad/iPhone 达到阈值（默认 80%）后自动回到「负载均衡」；阈值和开关在「Touch Bar 设置 › 电源」里调整，未知电量、多台设备或断开时不触发。电池域参考 [libimobiledevice 的 ideviceinfo](https://github.com/libimobiledevice/libimobiledevice/blob/master/tools/ideviceinfo.c)（仅核对协议字段，未引入依赖或复制实现）。
+
+模块栏默认常驻在触控栏中间，不需要先点固定区图标。Touch Bar 没有跨应用的后备层，也没有“中间是否被占用”的公开查询接口，因此让位由两条可解释的规则决定：
+
+1. **让位应用**：默认名单分两类，都能逐项开关。
+   - 系统内置：Safari、邮件、信息、备忘录、照片、预览、QuickTime、音乐、FaceTime、电话、通讯录、日历、地图、提醒事项、查找、终端、计算器、图书、TV、App Store、语音备忘录、活动监视器、自动操作、控制台、音频 MIDI 设置、屏幕共享、Pages/Numbers/Keynote、Xcode、Final Cut、Logic、GarageBand、iMovie。
+   - 第三方：Word/Excel/PowerPoint、Photoshop/Illustrator/Premiere Pro/After Effects、Sketch、BBEdit、iTerm2、Pixelmator Pro、Affinity Designer/Photo/Publisher 2、DaVinci Resolve、PCalc、djay。
+
+   收录依据是本机二进制扫描（`NSTouchBar` / `DFRFoundation` / `makeTouchBar` 符号）、Apple 支持文档、iMore 的 Touch Bar 应用清单，以及 Affinity、iTerm2、Blackmagic 的官方说明。名单可在「Touch Bar 设置 › 让位应用」里逐项开关，「添加其他应用…」可以直接选任意 `.app` 读取真实 bundle id，菜单里的「当前应用：在此应用让位」可临时增删。
+
+   **自动识别**（默认开启）：名单之外的应用如果自己占用了触控栏，DFR 会把我们的系统模态窗口压成 0 宽；连续两次检测到这种情况就把它记进「自动识别」列表，下次它到前台直接让位，不需要再人工查它支不支持 Touch Bar。识别结果在「让位应用」窗口里可以单独关掉。系统没有公开接口能查询“某个应用是否使用触控栏”，所以这条规则只在系统真的把触控栏交给该应用时生效；如果某个应用始终抢不过我们的模态栏，仍可用菜单里的「当前应用：在此应用让位」一键加入。
+2. **输入焦点**：前台应用的焦点在文本输入框（辅助功能接口读取 `AXTextField`/`AXTextArea` 等）且最近 3 秒内有按键时让出中间区域，停止输入 3 秒后模块栏自动回来。该规则可在设置里关闭；未授予辅助功能权限时自动失效。Electron 类应用（如 Obsidian）不暴露焦点，检测不到。
+
+用户手动收起模块栏后，自愈、唤醒和应用切换都不再自动弹回；点固定区图标或设置里的“显示模块栏”可以恢复，并在本次停留期间保持显示。
+
+## 更新检查与关于
+
+- **检查顺序**：`docs/updates.json`（静态清单）→ GitHub Releases Atom 订阅 → GitHub Releases API → Tags Atom → Tags API。Atom 是公开网页，不需要 token，也没有 API 每小时 60 次的限流，所以正常情况根本不会碰到“限流”。
+- **一键更新**：清单里带 `asset_url` + `sha256` 时，弹窗主按钮是「立即更新」：下载 zip → 校验 SHA-256 → 解压 → 校验代码签名 → 等 App 退出后替换 `/Applications/Bar Control.app` → 自动重开。任何一步失败都保留旧版本，并退回浏览器下载。
+- **更新弹窗**：显示更新说明，可「立即更新 / 前往下载」「稍后」或「跳过此版本」。同一版本 24 小时内最多弹一次；跳过后该版本不再提示。
+- **关于页**：`Touch Bar 设置 › 关于`，显示版本与构建号、上次检查时间、自动检查开关、项目/发布/反馈链接、复制版本信息与 MIT 许可入口。展开菜单里也有「关于 Bar Control」。
+- **自动检查**：启动后 12 秒检查一次，之后每小时判断一次；只有距上次成功检查超过 24 小时才真正发请求。开关关闭后不再自动请求。
+
+发版流程（让旧版本能检测到新版本）：
+
+1. 修改 `Info.plist` 的 `CFBundleShortVersionString` / `CFBundleVersion`；
+2. 更新 `docs/updates.json` 的 `latest` 与 `releases`（写清更新说明）；
+3. 写 `docs/release-notes/<version>.md`；
+4. 先 `DRY_RUN=1 scripts/publish-release.sh` 预览，再执行 `scripts/publish-release.sh`：它会构建、打成 `BarControl-<version>.zip`、把 `asset_url` / `sha256` / `asset_size` 写回清单，然后打 tag、推送并创建带安装包的 Release。
 
 ## Codex++ 与供应商用量
 

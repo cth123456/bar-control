@@ -52,10 +52,64 @@ struct CCSwitchProviderStore: Sendable {
         }
     }
 
-    private let databaseURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/BarControl/provider-store.db")
-    private let settingsURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/BarControl/provider-settings.json")
+    // Shared backend config for Bar Control and PhoneCodex. "auto" prefers a
+    // real CC Switch install and falls back to the legacy Codex++ store.
+    private static func homeURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    private static var backendConfiguration: [String: Any] {
+        let url = homeURL().appendingPathComponent("Library/Application Support/BarControl/backend-mode.json")
+        if let data = try? Data(contentsOf: url),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return object
+        }
+        return [:]
+    }
+
+    private static func expandedURL(_ value: String?, fallback: String) -> URL {
+        let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = (raw?.isEmpty == false ? raw! : fallback)
+        if path == "~" { return homeURL() }
+        if path.hasPrefix("~/") {
+            return homeURL().appendingPathComponent(String(path.dropFirst(2)))
+        }
+        return URL(fileURLWithPath: path)
+    }
+
+    private static var resolvedBackend: (mode: String, database: URL, settings: URL) {
+        let config = backendConfiguration
+        let ccDirectory = expandedURL(config["ccSwitchDirectory"] as? String, fallback: "~/.cc-switch")
+        let legacyDirectory = expandedURL(
+            config["codexPlusPlusDirectory"] as? String,
+            fallback: "~/Library/Application Support/BarControl"
+        )
+        var mode = (config["providerBackend"] as? String)?.lowercased() ?? "auto"
+        if mode == "auto" {
+            mode = FileManager.default.fileExists(atPath: ccDirectory.appendingPathComponent("cc-switch.db").path)
+                ? "ccswitch"
+                : "codexpp"
+        }
+        if mode == "custom" {
+            return (
+                mode,
+                expandedURL(config["databasePath"] as? String, fallback: ccDirectory.appendingPathComponent("cc-switch.db").path),
+                expandedURL(config["settingsPath"] as? String, fallback: ccDirectory.appendingPathComponent("settings.json").path)
+            )
+        }
+        if mode == "ccswitch" {
+            return (mode, ccDirectory.appendingPathComponent("cc-switch.db"), ccDirectory.appendingPathComponent("settings.json"))
+        }
+        return ("codexpp", legacyDirectory.appendingPathComponent("provider-store.db"), legacyDirectory.appendingPathComponent("provider-settings.json"))
+    }
+
+    private var databaseURL: URL {
+        Self.resolvedBackend.database
+    }
+
+    private var settingsURL: URL {
+        Self.resolvedBackend.settings
+    }
     private let codexPlusPlusSettingsURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".codex-session-delete/settings.json")
     private let codexPlusPlusMappingURL = FileManager.default.homeDirectoryForCurrentUser
@@ -697,6 +751,7 @@ struct CCSwitchProviderStore: Sendable {
     }
 
     private func currentProviderIDFromCodexPlusPlus() -> String? {
+        guard Self.resolvedBackend.mode == "codexpp" else { return nil }
         guard
             let data = try? Data(contentsOf: codexPlusPlusSettingsURL),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

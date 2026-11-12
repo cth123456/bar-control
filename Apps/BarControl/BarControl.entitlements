@@ -1,22 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-    <key>com.apple.application-identifier</key>
-    <string>G4Q5WT6422.local.codex.CodexTouchBarNative</string>
-    <key>com.apple.developer.team-identifier</key>
-    <string>G4Q5WT6422</string>
-    <key>com.apple.developer.icloud-container-environment</key>
-    <string>Development</string>
-    <key>com.apple.developer.icloud-container-identifiers</key>
-    <array>
-        <string>iCloud.com.cth123456.BarControlRemote</string>
-    </array>
-    <key>com.apple.developer.icloud-services</key>
-    <array>
-        <string>CloudKit</string>
-    </array>
-    <key>com.apple.developer.ubiquity-kvstore-identifier</key>
-    <string>G4Q5WT6422.local.codex.CodexTouchBarNative</string>
-</dict>
+<dict/>
 </plist>
