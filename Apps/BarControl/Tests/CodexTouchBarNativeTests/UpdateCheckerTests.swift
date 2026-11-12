@@ -33,6 +33,10 @@ final class UpdateCheckerTests: XCTestCase {
 
     // MARK: - 解析
 
+    func testManifestURLPointsAtBarControlSubdirectory() {
+        XCTAssertEqual(UpdateChecker.manifestURL.path, "/cth123456/bar-control/main/Apps/BarControl/docs/updates.json")
+    }
+
     func testManifestDecoding() throws {
         let json = """
         {"releases":[

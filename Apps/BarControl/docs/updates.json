@@ -1,8 +1,15 @@
 {
   "schema": 1,
   "repository": "cth123456/bar-control",
-  "latest": "0.40.7",
+  "latest": "0.40.8",
   "releases": [
+    {
+      "version": "0.40.8",
+      "name": "修复更新清单路径",
+      "published_at": "2026-11-12T13:00:00Z",
+      "url": "https://github.com/cth123456/bar-control/releases/tag/v0.40.8",
+      "notes": "修正更新清单路径为 Apps/BarControl/docs/updates.json，主更新源不再 404；保留 0.40.7 的新用户适配与随航快捷指令修复。"
+    },
     {
       "version": "0.40.7",
       "name": "新用户适配与随航快捷指令修复",

@@ -149,7 +149,7 @@ final class UpdateChecker {
     static let repositoryPage = URL(string: "https://github.com/\(repository)")!
     static let releasesPage = URL(string: "https://github.com/\(repository)/releases")!
     static let issuesPage = URL(string: "https://github.com/\(repository)/issues")!
-    static let manifestURL = URL(string: "https://raw.githubusercontent.com/\(repository)/main/docs/updates.json")!
+    static let manifestURL = URL(string: "https://raw.githubusercontent.com/\(repository)/main/Apps/BarControl/docs/updates.json")!
     static let releasesAPI = URL(string: "https://api.github.com/repos/\(repository)/releases?per_page=10")!
     static let tagsAPI = URL(string: "https://api.github.com/repos/\(repository)/tags?per_page=30")!
     /// Atom 订阅是公开网页，不需要 token，也没有 API 的每小时限流。
