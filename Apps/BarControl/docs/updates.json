@@ -8,7 +8,10 @@
       "name": "修复更新清单路径",
       "published_at": "2026-11-12T13:00:00Z",
       "url": "https://github.com/cth123456/bar-control/releases/tag/v0.40.8",
-      "notes": "修正更新清单路径为 Apps/BarControl/docs/updates.json，主更新源不再 404；保留 0.40.7 的新用户适配与随航快捷指令修复。"
+      "notes": "修正更新清单路径为 Apps/BarControl/docs/updates.json，主更新源不再 404；保留 0.40.7 的新用户适配与随航快捷指令修复。",
+      "asset_url": "https://github.com/cth123456/bar-control/releases/download/v0.40.8/BarControl-0.40.8.zip",
+      "sha256": "9c3bf829a06052bdecc2696d4a7b743d0b9a8c789975fbd8fec70375eb008a17",
+      "asset_size": 3993142
     },
     {
       "version": "0.40.7",
