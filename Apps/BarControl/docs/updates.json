@@ -8,6 +8,9 @@
       "name": "Bar Control 模块与安装说明更新",
       "published_at": "2026-11-12T00:00:00Z",
       "url": "https://github.com/cth123456/bar-control/releases/tag/v0.40.6",
+      "asset_url": "https://github.com/cth123456/bar-control/releases/download/v0.40.6/BarControl-0.40.6.zip",
+      "sha256": "c155a45c7f6fe2379bae5b9e497fa9501d608352e33ea4c18c598cea04d61f36",
+      "asset_size": 3993311,
       "notes": "更新与整理 Touch Bar、AI coding、能源流、电源策略、整机监控、亮度和菜单栏功能。完善设置和模块定制体验。GitHub 首页新增快速下载入口，并明确区分主 App 内置模块、可选随航管家和按需安装的放电 helper。常规使用无需 BetterTouchTool、Xcode 或管理员组件。"
     },
     {
