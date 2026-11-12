@@ -14,8 +14,10 @@ Touch Bar 一直被认为鸡肋：中看不中用。
 · 电源策略：优先充电 / 负载均衡 / 优先放电，低电量自动切换
 · 有应用占用触控栏时自动让位，不抢 Safari、Xcode 的位置
 
-已经开源（MIT），支持 macOS 26+，附安装脚本。
-仓库：https://github.com/cth123456/bar-control
+已经开源（MIT），支持 macOS 13+ 和带 Touch Bar 的 MacBook Pro，提供 DMG 拖放安装。
+主 App 下载（DMG）：https://github.com/cth123456/bar-control/releases/download/v0.40.6/BarControl-0.40.6.dmg
+可选随航管家（独立 DMG）：https://github.com/cth123456/bar-control/releases/download/v0.40.6/SidecarPilot-1.2.5.dmg
+功能介绍与源码：https://github.com/cth123456/bar-control
 
 #MacBook #TouchBar #macOS #效率工具 #开源 #独立开发
 
