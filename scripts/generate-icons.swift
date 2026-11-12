@@ -119,41 +119,6 @@ private func sidecarIcon() {
     stroke(arrow, .white, width: 18)
 }
 
-private func localModelIcon() {
-    drawBase(start: 0x3B176D, end: 0xBD2BD2)
-
-    let core = NSBezierPath(ovalIn: NSRect(x: 350, y: 350, width: 324, height: 324))
-    fill(core, color(0x111827, alpha: 0.68))
-    stroke(core, NSColor.white.withAlphaComponent(0.92), width: 18)
-
-    let bars: [(CGFloat, CGFloat)] = [
-        (238, 152), (306, 236), (374, 322), (650, 322), (718, 236), (786, 152),
-    ]
-    for (x, height) in bars {
-        let rect = NSRect(x: x, y: 512 - height / 2, width: 32, height: height)
-        fill(rounded(rect, radius: 16), NSColor.white.withAlphaComponent(0.94))
-    }
-
-    let wave = NSBezierPath()
-    wave.move(to: NSPoint(x: 417, y: 514))
-    wave.curve(
-        to: NSPoint(x: 607, y: 514),
-        controlPoint1: NSPoint(x: 459, y: 654),
-        controlPoint2: NSPoint(x: 565, y: 374)
-    )
-    wave.lineCapStyle = .round
-    stroke(wave, .white, width: 25)
-
-    let sparkle = NSBezierPath()
-    sparkle.move(to: NSPoint(x: 700, y: 744))
-    sparkle.line(to: NSPoint(x: 720, y: 800))
-    sparkle.line(to: NSPoint(x: 740, y: 744))
-    sparkle.move(to: NSPoint(x: 674, y: 772))
-    sparkle.line(to: NSPoint(x: 766, y: 772))
-    sparkle.lineCapStyle = .round
-    stroke(sparkle, color(0xFDE68A), width: 14)
-}
-
 private func render(name: String, draw: () -> Void, outputDirectory: URL) throws {
     let image = NSImage(size: canvas)
     image.lockFocus()
@@ -197,5 +162,4 @@ let outputDirectory = URL(fileURLWithPath: CommandLine.arguments.dropFirst().fir
 try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 try render(name: "icon-bar-control.png", draw: barControlIcon, outputDirectory: outputDirectory)
 try render(name: "icon-sidecar-pilot.png", draw: sidecarIcon, outputDirectory: outputDirectory)
-try render(name: "icon-local-model.png", draw: localModelIcon, outputDirectory: outputDirectory)
 try renderTemplate(outputDirectory: outputDirectory)

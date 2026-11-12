@@ -67,6 +67,34 @@ enum ServiceMonitor {
             if case .reveal(let path) = action { return path }
             return nil
         }
+
+        /// 是否是这台机器上真实存在的服务。注册表只是模板，
+        /// 新电脑上未安装的条目不应该出现在服务页或菜单里。
+        func isInstalled(home: URL = FileManager.default.homeDirectoryForCurrentUser,
+                         exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> Bool {
+            switch kind {
+            case .launchAgent(let label):
+                let agents = [
+                    home.appendingPathComponent("Library/LaunchAgents/\(label).plist").path,
+                    "/Library/LaunchAgents/\(label).plist",
+                    "/Library/LaunchDaemons/\(label).plist",
+                ]
+                if agents.contains(where: exists) { return true }
+                return logDirectory.map { directoryExists($0, home: home, exists: exists) } ?? false
+            case .app(let processName):
+                if let appPath, exists(appPath) { return true }
+                return exists("/Applications/\(processName).app")
+            case .http:
+                if let appPath, exists(appPath) { return true }
+                return logDirectory.map { directoryExists($0, home: home, exists: exists) } ?? false
+            }
+        }
+
+        private func directoryExists(_ path: String, home: URL,
+                                     exists: (String) -> Bool) -> Bool {
+            let resolved = path.hasPrefix("/") ? path : home.appendingPathComponent(path).path
+            return exists(resolved)
+        }
     }
 
     /// A declarative target a service can open. New services only need to
@@ -178,7 +206,7 @@ enum ServiceMonitor {
 
     /// 顺序即菜单顺序；新增服务时同步更新 `runningCount` 的总数。
     static func services() -> [Service] {
-        registry() + userServices()
+        (registry() + userServices()).filter { $0.isInstalled() }
     }
 
     // MARK: - 状态探测

@@ -27,6 +27,24 @@ final class ServiceRegistryTests: XCTestCase {
         XCTAssertNil(template.service)
     }
 
+    func testRegistryEntriesAreHiddenWhenNothingIsInstalled() {
+        let home = URL(fileURLWithPath: "/Users/fresh")
+        let services = MainActor.assumeIsolated { ServiceMonitor.registry() }
+        for service in services {
+            XCTAssertFalse(service.isInstalled(home: home, exists: { _ in false }),
+                           "\(service.name) should not appear on a clean Mac")
+        }
+    }
+
+    func testLaunchAgentIsShownWhenPlistOrLogDirectoryExists() {
+        let home = URL(fileURLWithPath: "/Users/fresh")
+        let service = MainActor.assumeIsolated { ServiceMonitor.registry() }
+            .first { if case .launchAgent = $0.kind { return true }; return false }!
+        let plist = home.appendingPathComponent("Library/LaunchAgents/com.global-memory.plist").path
+        XCTAssertTrue(service.isInstalled(home: home, exists: { $0 == plist }))
+        XCTAssertFalse(service.isInstalled(home: home, exists: { _ in false }))
+    }
+
     func testBuiltInRegistryUsesDeclarativeActions() {
         for service in MainActor.assumeIsolated({ ServiceMonitor.registry() }) {
             if service.action != nil {

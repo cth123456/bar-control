@@ -187,12 +187,17 @@ enum MainComponent: String, CaseIterable {
         case .sidecar:
             return manager.fileExists(atPath: "/Applications/随航管家.app")
         case .aiCoding:
-            // AI coding 数据来自 Magpie、Codex/CC Switch 或 ZCode 配置；装了任一即视为可用。
+            // 只有真实存在账户或中转配置时才显示；空目录不算数据。
             if manager.fileExists(atPath: "/Applications/magpie.app") { return true }
-            if manager.fileExists(atPath: NSHomeDirectory() + "/.codex") { return true }
-            if manager.fileExists(atPath: NSHomeDirectory() + "/.zcode/v2/config.json") { return true }
-            if manager.fileExists(atPath: NSHomeDirectory() + "/.cc-switch/cc-switch.db") { return true }
-            return manager.fileExists(atPath: "/Applications/ChatGPT.app")
+            if manager.fileExists(atPath: "/Applications/ChatGPT.app") { return true }
+            let paths = [
+                "/.codex/auth.json",
+                "/.cc-switch/cc-switch.db",
+                "/.zcode/v2/config.json",
+                "/.claude/.credentials.json",
+                "/.config/github-copilot/hosts.json",
+            ]
+            return paths.contains { manager.fileExists(atPath: NSHomeDirectory() + $0) }
         }
     }
 
@@ -2800,16 +2805,19 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
                 residentTotal += 1; if state == .running { residentRun += 1 }
             }
         }
-        let serviceRow = ServiceCountsMenuRow(width: menu.minimumWidth)
-        serviceRow.update(scheduledRunning: scheduledRun, scheduledTotal: scheduledTotal,
-                          residentRunning: residentRun, residentTotal: residentTotal,
-                          unknown: counts.states.allSatisfy { $0 == .unknown })
-        serviceRow.onPress = { [weak self] in self?.openServicesWindow() }
-        let servicesItem = NSMenuItem()
-        servicesItem.view = serviceRow
-        menu.addItem(servicesItem)
-        servicesWindowMenuItem = servicesItem
-        menu.addItem(.separator())
+        // 新电脑没有配置任何服务时，不占用菜单空间；装好后自动出现。
+        if !services.isEmpty {
+            let serviceRow = ServiceCountsMenuRow(width: menu.minimumWidth)
+            serviceRow.update(scheduledRunning: scheduledRun, scheduledTotal: scheduledTotal,
+                              residentRunning: residentRun, residentTotal: residentTotal,
+                              unknown: counts.states.allSatisfy { $0 == .unknown })
+            serviceRow.onPress = { [weak self] in self?.openServicesWindow() }
+            let servicesItem = NSMenuItem()
+            servicesItem.view = serviceRow
+            menu.addItem(servicesItem)
+            servicesWindowMenuItem = servicesItem
+            menu.addItem(.separator())
+        }
         let showClipboard = menuComponents.contains(.clipboard)
         let showKeyboard = menuComponents.contains(.keyboardLock)
         if showClipboard || showKeyboard {

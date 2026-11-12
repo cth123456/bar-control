@@ -1,8 +1,15 @@
 {
   "schema": 1,
   "repository": "cth123456/bar-control",
-  "latest": "0.40.6",
+  "latest": "0.40.7",
   "releases": [
+    {
+      "version": "0.40.7",
+      "name": "新用户适配与随航快捷指令修复",
+      "published_at": "2026-11-12T12:00:00Z",
+      "url": "https://github.com/cth123456/bar-control/releases/tag/v0.40.7",
+      "notes": "新用户适配：服务只显示本机真实存在的条目，AI coding 需检测到真实账户或中转配置才出现，新电脑不再出现空的 0/0 服务行。随航管家普通启动改为无窗口连接，iPad 快捷指令无需改脚本即可连接，连完自动退出，已连接时不会反向断开。新增新电脑首次安装预览图。全量 157 个测试通过。"
+    },
     {
       "version": "0.40.6",
       "name": "Bar Control 模块与安装说明更新",

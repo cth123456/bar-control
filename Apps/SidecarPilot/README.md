@@ -4,25 +4,52 @@ Bar Control 的可选伴侣 App，用一个按钮连接或断开 iPad 随航，�
 
 ## 配置
 
-先安装 [BetterDisplay](https://github.com/waydabber/BetterDisplay)，再把下面的设备名替换成系统“显示器”菜单中出现的 iPad 名称：
+首次打开 App 会显示“随航管家设置”面板，并立即主动搜索同一 Apple 账户下已就绪的 iPad（最多 8 秒、每 0.5 秒重试）。发现一台设备时自动选中并填入名称；发现多台时由用户选择；也可以手动输入名称。之后列表每 5 秒刷新，另提供“重新扫描设备”按钮。点“检查并连接”时若尚未选定设备，会再搜索最多 10 秒并自动匹配唯一设备。保存不会自行连接。设置写入当前 macOS 用户的 `~/Library/Application Support/SidecarPilot/configuration.json`，无需终端命令或管理员权限；旧版 `TargetDevice` 偏好设置会继续读取。
 
-```sh
-defaults write local.codex.SidecarPilot TargetDevice "我的 iPad"
-```
+设置面板右上角显示当前版本（例如 `v1.2.4 (9)`），用于确认是否已经换上最新版本。
 
-临时测试其他设备时，也可以使用环境变量：
+菜单栏与设置面板分别提供“连接随航”和“断开随航”，独立窗口里的“检查并连接”不会把当前已连接的会话反转成断开。只有 Bar Control 的 Touch Bar 单键入口保留原有“点一下切换”语义。临时测试其他设备时仍可使用环境变量：
 
 ```sh
 SIDECAR_PILOT_DEVICE="我的 iPad" open -n "dist/随航管家.app"
 ```
 
+如果列表暂时为空，可手动输入 iPad 名称，列表也会持续刷新。iPad 需解锁、与 Mac 使用同一 Apple 账户，并开启“设置 → 通用 → 隔空播放与连续互通 → 光标与键盘”。
+
+## 新电脑前置条件
+
+- Mac 和 iPad 的具体型号及系统版本必须符合 Apple 的 Sidecar 兼容要求；两台设备需使用同一 Apple 账户，账户开启双重认证，并开启 Handoff。
+- 无线 Sidecar 还要求 Wi‑Fi、蓝牙开启且两台设备在蓝牙范围内；USB Sidecar 需要可传输数据的线缆，并在系统提示时选择信任此电脑。蓝牙用于发现/连续互通，不能据此推断屏幕数据走蓝牙。
+- iPad 保持解锁，并在“设置 → 通用 → 隔空播放与连续互通”中开启“光标与键盘”。
+- 不需要 BetterDisplay、管理员权限或额外 Sidecar 组件；App 调用 macOS 自带的私有 `SidecarCore`。该私有接口可能随 macOS 更新变化，设置面板会显示接口可用性。
+- 选择设备名称并开启辅助功能不保证连接成功，以上 Apple 账户、安全设置、机型兼容和链路条件同样必须满足。“直连”和“重连”不需要辅助功能或自动化权限。只有前两种方式失败、改用系统设置菜单兜底时，才需要辅助功能权限，并由 macOS 请求自动化授权。每台新 Mac 都要单独授权；App 可以打开辅助功能设置页，但不能代用户批准。
+- 配置按 macOS 用户分别保存，复制 App 不会复制个人设备名。连接成功或失败后，普通启动会保留面板与错误状态，便于重试或导出诊断日志。
+- App 只能匹配 macOS 已经发现并允许随航的设备：无线要求同一 Apple 账户、双重认证、Handoff 与 Wi‑Fi/蓝牙可用；USB 要求数据线连接并在 iPad 上选择“信任此电脑”。如果系统还没发现设备，面板会给出对应提示（USB 已插入时会单独提示信任）。
+- 设置面板分开显示 App 的软件调用路径（直连/重连/系统设置）与当前会话链路（USB/无线）。现阶段 App 没有可靠的 USB/无线链路检测，因此会显示“无法判定”，不会从蓝牙状态推断。
+- 镜像、扩展等显示模式由 macOS 与 iPad 决定，本 App 不切换、不重启显示服务。断开 Sidecar 后也不强杀 `UniversalControl`，由 macOS 自行恢复通用控制。
+- 需要切换镜像/扩展时，使用面板中的“打开显示器设置”自行选择；App 只打开系统设置，不改显示配置。
+- 连接结果只在 Touch Bar 上短暂显示（约 3 秒），随后写回空闲状态，避免 Bar Control 永久停在“连接成功 + 多少秒”的绿色页面。App 启动时也会清掉上次异常退出遗留的结果状态。
+- 设置窗口关闭后随航助手停止后台轮询并退出，不再常驻执行 `system_profiler` 和设备扫描，避免拖慢 Bar Control 展开全部模块。
+
+## 诊断日志
+
+遇到连接或发现问题时，在“随航管家设置”面板点击“导出诊断日志…”，选择保存位置，再把生成的 ZIP 发给支持人员。压缩包包含 App 版本、macOS 版本、SidecarCore 可用性、已发现设备、连接状态、软件调用路径和链路检测状态，以及 App 和最近 30 分钟的随航相关系统日志。导出前会将当前用户主目录替换为 `~`；报告仍可能包含 iPad 名称、时间戳和错误内容。日志只写到用户选择的位置，不会自动上传。
+
 ## 工作方式
 
-1. 使用 BetterDisplay CLI 直接连接；
+1. 调用系统私有的 `SidecarCore`（`SidecarDisplayManager`）直接连接，不依赖任何第三方 App；
 2. 失败后断开并重连；
 3. 最后通过系统“显示器”界面选择目标 iPad。
 
-每一步都会同时检查 BetterDisplay 状态与 `system_profiler` 的真实 `Sidecar Display`。App 不会重启 Universal Control、蓝牙或 Wi-Fi 服务，也不会删除配对和 Apple Account 数据。
+本 App 不再创建任何带 `touchBar` 的窗口，也不激活自己。此前非 native-host 启动（例如 iPad 快捷指令直接拉起）会新建一个隐藏窗口并挂上 `NSTouchBar`，瞬间成为 Touch Bar 的前台提供者，把 Bar Control 的整排模块顶掉。现在所有启动方式都只写状态文件和维护菜单栏进度，Touch Bar 所有权始终留给 Bar Control。
+
+每一步都会同时检查 `SidecarDisplayManager` 报告的已连接设备与 `system_profiler` 的真实 `Sidecar Display`。断开随航后只确认系统显示状态已移除，不强杀 `UniversalControl`，不重启蓝牙或 Wi‑Fi，也不删除配对和 Apple Account 数据。iPad 仍需保持解锁，并开启“设置 → 通用 → 隔空播放与连续互通 → 光标和键盘”。
+
+Touch Bar 随航模块的菜单提供“修复随航黑屏并重新连接”：它会先确认当前会话已断开，再用现有连接流程重新连接并验证系统显示状态。此操作不结束 `WindowServer`、不注销用户，也不重启 Mac；如果 macOS 显示服务自身卡死，重连可能无法恢复画面，届时仍需 macOS 自身恢复或重启。
+
+恢复动作复用本项目已有的 `SidecarCore` 连接实现；2026-10-13 按 macOS Sidecar 黑屏恢复与连接管理关键词检索 GitHub，未找到适合直接接入的维护中实现。
+
+`SidecarCore` 是系统私有框架，未来 macOS 更新可能改变它的类名或选择器；一旦接口不可用，App 会跳过前两种方式并提示“系统随航接口不可用”，第三种系统界面方式不受影响。
 
 ## 构建
 

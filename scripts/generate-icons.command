@@ -7,7 +7,6 @@ asset_dir="$repo_dir/docs/assets"
 /usr/bin/swift "$repo_dir/scripts/generate-icons.swift" "$asset_dir"
 /usr/bin/sips -z 1024 1024 "$asset_dir/icon-bar-control.png" --out "$asset_dir/icon-bar-control.png" >/dev/null
 /usr/bin/sips -z 1024 1024 "$asset_dir/icon-sidecar-pilot.png" --out "$asset_dir/icon-sidecar-pilot.png" >/dev/null
-/usr/bin/sips -z 1024 1024 "$asset_dir/icon-local-model.png" --out "$asset_dir/icon-local-model.png" >/dev/null
 /usr/bin/sips -z 36 36 "$asset_dir/bar-control-template.png" --out "$asset_dir/bar-control-template.png" >/dev/null
 
 make_icns() {
@@ -33,12 +32,10 @@ make_icns() {
 
 /bin/mkdir -p \
     "$repo_dir/Apps/BarControl/Resources" \
-    "$repo_dir/Apps/SidecarPilot/Resources" \
-    "$repo_dir/Apps/LocalModelVoice/Resources"
+    "$repo_dir/Apps/SidecarPilot/Resources"
 
 make_icns "$asset_dir/icon-bar-control.png" "$repo_dir/Apps/BarControl/Resources/BarControl.icns"
 make_icns "$asset_dir/icon-sidecar-pilot.png" "$repo_dir/Apps/SidecarPilot/Resources/SidecarPilot.icns"
-make_icns "$asset_dir/icon-local-model.png" "$repo_dir/Apps/LocalModelVoice/Resources/LocalModelVoice.icns"
 /usr/bin/ditto "$asset_dir/bar-control-template.png" "$repo_dir/Apps/BarControl/Resources/BarControlTemplate.png"
 
-echo "已生成三款 App 图标。"
+echo "已生成两款 App 图标。"
