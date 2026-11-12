@@ -6,7 +6,7 @@
 
 <p align="center">让 MacBook Pro 的 Touch Bar 重新成为 AI、随航与整机状态控制台。</p>
 
-<p align="center"><a href="https://github.com/cth123456/bar-control/releases/latest">下载最新版</a> · <a href="Apps/BarControl/README.md">Bar Control 完整功能与模块说明</a> · <a href="Apps/SidecarPilot/README.md">随航管家说明</a></p>
+<p align="center"><a href="https://github.com/cth123456/bar-control/releases/download/v0.40.6/BarControl-0.40.6.dmg">下载 Bar Control 0.40.6 DMG</a> · <a href="Apps/BarControl/README.md">Bar Control 完整功能与模块说明</a> · <a href="Apps/SidecarPilot/README.md">随航管家说明</a></p>
 
 <p align="center">
   <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-111827?logo=apple">
@@ -48,7 +48,13 @@ Bar Control 内的随航、AI coding、能源流、供电策略、系统监控�
 
 ## 下载与安装
 
-需要带实体 Touch Bar 的 MacBook Pro、macOS 13 或更高版本。打开[最新版 Release](https://github.com/cth123456/bar-control/releases/latest)，下载 `BarControl-版本号.zip`，解压后将 `Bar Control.app` 移到“应用程序”文件夹并打开。常规使用不需要安装 Xcode、BetterTouchTool 或管理员组件。
+需要带实体 Touch Bar 的 MacBook Pro、macOS 13 或更高版本。打开[最新版 Release](https://github.com/cth123456/bar-control/releases/latest)，按需下载：
+
+- **主 App 安装盘**：`BarControl-版本号.dmg`，打开后将 `Bar Control.app` 拖入“Applications”文件夹。
+- **可选随航管家安装盘**：`SidecarPilot-版本号.dmg`，只有需要独立随航菜单栏 App 时才下载，打开后将 `随航管家.app` 拖入“Applications”文件夹。
+- **自动更新包**：`BarControl-版本号.zip` 供 App 内置更新器校验并安装；普通手动安装优先使用 DMG。
+
+常规使用不需要安装 Xcode、BetterTouchTool 或管理员组件。
 
 如需从源码安装：
 
@@ -64,7 +70,7 @@ cd bar-control
 
 ### 随航管家
 
-随航管家可以独立于主 App 下载和运行，不需要 BetterDisplay。它调用 macOS 内置随航接口；Mac 与 iPad 需满足 Apple 随航兼容条件并使用同一 Apple 账户。源码安装方式：
+随航管家可以独立于主 App 下载和运行，不需要 BetterDisplay。它调用 macOS 内置随航接口；Mac 与 iPad 需满足 Apple 随航兼容条件并使用同一 Apple 账户。手动安装时下载 Release 中的 `SidecarPilot-版本号.dmg`；源码安装方式：
 
 ```sh
 defaults write local.codex.SidecarPilot TargetDevice "我的 iPad"
