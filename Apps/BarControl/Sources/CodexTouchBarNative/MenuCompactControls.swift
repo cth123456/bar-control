@@ -80,11 +80,12 @@ final class PowerMenuControlsView: NSView {
     var preferredWidth: CGFloat { 68 + Self.limitWidth(for: maximum) }
 
     static func limitWidth(for percent: Int) -> CGFloat {
-        let text = "上限 ?percent?" as NSString
-        _ = text
-        let label = "上限 \(percent)%" as NSString
-        let width = label.size(withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)]).width
-        return ceil(width) + 12 * 2 + 16 * 2 + 4 + 20
+        let fontSize: CGFloat = 11
+        let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .semibold)
+        let textWidth: CGFloat = ("上限 \(percent)%" as NSString)
+            .size(withAttributes: [.font: font]).width
+        let fixed: CGFloat = 24 + 32 + 4 + 20
+        return ceil(textWidth) + fixed
     }
 
     override func layout() {

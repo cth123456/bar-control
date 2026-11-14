@@ -125,7 +125,7 @@ final class UpdateInstaller {
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            delegate.completion = continuation
+            delegate.attach(continuation)
             let task = session.downloadTask(with: url)
             task.resume()
         }
@@ -203,16 +203,22 @@ final class UpdateInstaller {
     }
 }
 
-private final class UpdateDownloadDelegate: NSObject, URLSessionDownloadDelegate {
+private final class UpdateDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let destination: URL
     private let progress: @MainActor (Double) -> Void
     private let lock = NSLock()
     private var finished = false
-    var completion: CheckedContinuation<Void, Error>?
+    private var completion: CheckedContinuation<Void, Error>?
 
     init(destination: URL, progress: @escaping @MainActor (Double) -> Void) {
         self.destination = destination
         self.progress = progress
+    }
+
+    func attach(_ continuation: CheckedContinuation<Void, Error>) {
+        lock.lock()
+        defer { lock.unlock() }
+        completion = continuation
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,

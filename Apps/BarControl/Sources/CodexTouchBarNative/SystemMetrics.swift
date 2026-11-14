@@ -857,24 +857,24 @@ final class PowerRunnerButton: NSButton {
     // MARK: - 帧图预加载
 
     /// 每样式帧图缓存：后台线程加载，避免主线程同步读盘/解码拖慢首次绘制。
-    private static var frameCache: [PowerRunnerStyle: [NSImage]] = [:]
-    private static let frameCacheLock = NSLock()
+    nonisolated(unsafe) private static var frameCache: [PowerRunnerStyle: [NSImage]] = [:]
+    nonisolated private static let frameCacheLock = NSLock()
 
-    static func cachedFrames(for style: PowerRunnerStyle) -> [NSImage] {
+    nonisolated static func cachedFrames(for style: PowerRunnerStyle) -> [NSImage] {
         frameCacheLock.lock()
         defer { frameCacheLock.unlock() }
         if let frames = frameCache[style] { return frames }
         return []
     }
 
-    static func cacheFrames(_ frames: [NSImage], for style: PowerRunnerStyle) {
+    nonisolated static func cacheFrames(_ frames: [NSImage], for style: PowerRunnerStyle) {
         frameCacheLock.lock()
         defer { frameCacheLock.unlock() }
         frameCache[style] = frames
     }
 
     /// 启动时后台预热所有样式的帧图，之后 setStyle/init 直接用缓存。
-    static func warmFramesInBackground() {
+    nonisolated static func warmFramesInBackground() {
         DispatchQueue.global(qos: .utility).async {
             let styles = PowerRunnerStyle.allCases
             for style in styles {
@@ -888,7 +888,7 @@ final class PowerRunnerButton: NSButton {
         }
     }
 
-    private static func loadFramesFromDisk(for style: PowerRunnerStyle) -> [NSImage] {
+    nonisolated private static func loadFramesFromDisk(for style: PowerRunnerStyle) -> [NSImage] {
         let sourceRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
