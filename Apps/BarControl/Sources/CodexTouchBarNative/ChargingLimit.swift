@@ -20,6 +20,8 @@ enum PowerFlowPolicyStore {
     static let macLowPercentKey = "lowBatteryMacPercent.v1"
     static let deviceLowPercentKey = "lowBatteryDevicePercent.v1"
     static let autoReturnEnabledKey = "deviceAutoReturnEnabled.v1"
+    static let manualOverrideKey = "powerFlowManualOverride.v1"
+    static let manualBaseDevicePercentKey = "powerFlowManualBaseDevicePercent.v1"
 
     /// 优先充电 / 优先放电时，接入设备充到该百分比后自动回到负载均衡。
     /// 低电量阈值：本机与有线设备各自默认 30%。
@@ -57,6 +59,28 @@ enum PowerFlowPolicyStore {
             return defaults.bool(forKey: autoReturnEnabledKey)
         }
         set { UserDefaults.standard.set(newValue, forKey: autoReturnEnabledKey) }
+    }
+
+    /// 用户手动选过策略后置 true；只有低电量自动规则真正触发时才清除。
+    static var manualOverride: Bool {
+        get { UserDefaults.standard.bool(forKey: manualOverrideKey) }
+        set { UserDefaults.standard.set(newValue, forKey: manualOverrideKey) }
+    }
+
+    /// 手动选择时外接设备的电量；只有之后从阈值下升到阈值上才触发自动回切。
+    static var manualBaseDevicePercent: Int? {
+        get {
+            let defaults = UserDefaults.standard
+            guard defaults.object(forKey: manualBaseDevicePercentKey) != nil else { return nil }
+            return defaults.integer(forKey: manualBaseDevicePercentKey)
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue, forKey: manualBaseDevicePercentKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: manualBaseDevicePercentKey)
+            }
+        }
     }
 
     /// 读取某个区间端点；未设置或越界时退回默认值。
@@ -153,6 +177,11 @@ extension PowerFlowPolicy {
     /// 谁的电量最低就优先保谁：本机低 → 优先充电；
     /// 只有外接设备低 → 优先放电；都低 → 优先保本机并提示；
     /// 都回到阈值以上 → 回负载均衡。
+    /// 手动选择优先：电量都正常时保持用户选择；只有自动规则有明确动作时才让位。
+    static func shouldHoldManualSelection(manualOverride: Bool, priority: LowBatteryPriority) -> Bool {
+        manualOverride && priority == .keep
+    }
+
     static func lowBatteryPriority(
         macBattery: Int?,
         deviceBattery: Int?,

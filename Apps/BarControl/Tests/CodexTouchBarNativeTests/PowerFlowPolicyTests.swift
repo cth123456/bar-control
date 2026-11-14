@@ -55,4 +55,12 @@ final class PowerFlowPolicyTests: XCTestCase {
             .balanced
         )
     }
+
+    func testManualSelectionIsHeldUntilAutoRuleActs() {
+        XCTAssertTrue(PowerFlowPolicy.shouldHoldManualSelection(manualOverride: true, priority: .keep))
+        XCTAssertFalse(PowerFlowPolicy.shouldHoldManualSelection(manualOverride: true, priority: .charging))
+        XCTAssertFalse(PowerFlowPolicy.shouldHoldManualSelection(manualOverride: true, priority: .discharging))
+        XCTAssertFalse(PowerFlowPolicy.shouldHoldManualSelection(manualOverride: true, priority: .bothLow))
+        XCTAssertFalse(PowerFlowPolicy.shouldHoldManualSelection(manualOverride: false, priority: .keep))
+    }
 }

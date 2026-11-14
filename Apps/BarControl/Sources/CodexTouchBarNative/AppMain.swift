@@ -667,6 +667,8 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     /// Charger and cable specifications, refreshed on the same 1 s cadence
     /// but changing far less often (only on plug/unplug).
     private var interfaceSpecs = InterfaceSpecs.empty
+    private var interfaceSpecsReadAt = Date.distantPast
+    private var interfaceSpecsPowerState: Bool?
     private var smokeRetainedView: NSView?
     private var smokeRetainedWindow: NSWindow?
     /// 主层布局日志去重：布局在多个计时器里调用，只在原点/宽度变化时记录。
@@ -717,29 +719,38 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
             remoteControl.switchProvider(id: CommandLine.arguments[switchIndex + 1])
         }
         refresh()
-        let refreshTimer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
+        let refreshTimer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
         self.refreshTimer = refreshTimer
         RunLoop.main.add(refreshTimer, forMode: .common)
         refreshSidecarStatus()
-        sidecarTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+        sidecarTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.sidecarPollTick += 1
-                // 连接中用 0.8 秒轮询，其余状态每 4 秒读一次即可。
-                if self.sidecarStatus.state == "connecting" || self.sidecarPollTick % 5 == 0 {
+                // 连接中每 2 秒轮询，其余状态每 6 秒读一次。
+                if self.sidecarStatus.state == "connecting" || self.sidecarPollTick % 3 == 0 {
                     self.refreshSidecarStatus()
                 }
             }
         }
         refreshSystemMetrics()
         let metricsTimer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshSystemMetrics() }
+            Task { @MainActor in
+                guard let self else { return }
+                // 菜单关闭时把 IORegistry/IOReport 采样降到约 10 秒一次；
+                // 展开菜单会立即触发一次并恢复 2 秒节奏。
+                if !self.mainMenuIsOpen,
+                   Date().timeIntervalSince(self.lastPanelMetricsAt ?? .distantPast) < 10 {
+                    return
+                }
+                self.refreshSystemMetrics()
+            }
         }
         self.metricsTimer = metricsTimer
         RunLoop.main.add(metricsTimer, forMode: .common)
-        let brightnessTimer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+        let brightnessTimer = Timer(timeInterval: 4, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.maintainTouchBarBrightness() }
         }
         self.brightnessTimer = brightnessTimer
@@ -789,7 +800,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
             self?.repairNativeTouchBarModeIfNeeded()
         }
         // 常驻自愈：每 2 秒检查模块栏是否仍在显示，消失则重新呈现。
-        let dfrTimer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
+        let dfrTimer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.dfrSelfHealIfNeeded() }
         }
         self.dfrWatchdogTimer = dfrTimer
@@ -860,6 +871,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
                 guard let self else { return }
                 self.frontmostChangedAt = Date()
                 self.manualYieldBypass = false
+                self.detailYieldBypassUntil = .distantPast
                 self.textFocusEditing = false
                 self.evaluateTouchBarYield()
             }
@@ -2525,7 +2537,9 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     }
 
     private func makeSystemContainer() -> NSView {
-        let container = FixedTouchBarContainer(width: 495)
+        // 6 张卡片总宽 457，左侧返回键占 40；容器留 8px 右内边距，
+        // 否则最后一张气泡会被黑底裁掉。
+        let container = FixedTouchBarContainer(width: 505)
         let back = iconButton(
             symbol: "chevron.backward",
             description: "返回主层",
@@ -2706,6 +2720,27 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
             macBattery: metrics.batteryPercent,
             deviceBattery: metrics.externalBatteryPercent
         )
+        if PowerFlowPolicyStore.manualOverride {
+            let threshold = PowerFlowPolicyStore.autoReturnThreshold
+            let currentDevicePercent = metrics.externalBatteryPercent
+            let crossedThreshold = PowerFlowPolicyStore.manualBaseDevicePercent.map { base in
+                base < threshold && (currentDevicePercent ?? base) >= threshold
+            } ?? false
+            let thresholdReturn = PowerFlowPolicyStore.autoReturnEnabled
+                && crossedThreshold
+                && PowerFlowPolicyStore.current != .balanced
+            if priority == .keep, thresholdReturn {
+                PowerFlowPolicyStore.manualOverride = false
+                PowerFlowPolicyStore.manualBaseDevicePercent = nil
+                AppLog.write("power policy manual override cleared: device reached threshold")
+            } else if PowerFlowPolicy.shouldHoldManualSelection(manualOverride: true, priority: priority) {
+                return
+            } else {
+                PowerFlowPolicyStore.manualOverride = false
+                PowerFlowPolicyStore.manualBaseDevicePercent = nil
+                AppLog.write("power policy manual override cleared by auto rule")
+            }
+        }
         let next: PowerFlowPolicy
         let reason: String
         switch priority {
@@ -4531,15 +4566,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
                         value: nil,
                         toggle: true, on: UserDefaults.standard.bool(forKey: "hideSystemBatteryIcon.v1")),
             ]),
-            ("硬件", "cable.connector", "cable.connector", [
-                RowSpec(id: "interface", title: "接口与线缆详情…",
-                        subtitle: "充电器、USB-C 端口和线缆规格",
-                        action: #selector(self.showInterfaceDetails),
-                        symbol: "cable.connector",
-                        symbolOff: nil,
-                        value: nil,
-                        toggle: false, on: false),
-            ]),
+            ("硬件", "cable.connector", "cable.connector", []),
             ("关于", "info.circle", "info.circle", []),
         ]
 
@@ -4644,6 +4671,12 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
             about.frame.origin = NSPoint(x: 0, y: y)
             pane.addSubview(about)
             y += about.frame.height + 16
+        } else if group.0 == "硬件" {
+            let detail = makeSettingsInlineContent(id: "interface", width: contentWidth)
+            detail.frame.origin = NSPoint(x: 0, y: y)
+            detail.autoresizingMask = [.width]
+            pane.addSubview(detail)
+            y += detail.frame.height + 16
         } else {
         let inlineIDs: Set<String> = ["menuModules", "yieldApps", "interface"]
         for spec in group.3 {
@@ -5030,6 +5063,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     func menuWillOpen(_ menu: NSMenu) {
         guard menu === statusItem.menu else { return }
         let started = CACurrentMediaTime()
+        lastTouchBarInteractionAt = Date()
         mainMenuIsOpen = true
         aiDisplayMenuOpen = true
         refreshApplicationYieldRow()
@@ -5269,7 +5303,13 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
             powerFlowView?.metrics = next
             systemDetailView?.metrics = next
             updateMenuSummary(for: .systemMonitor)
-            interfaceSpecs = await Task.detached(priority: .utility) { InterfaceSpecsReader.read() }.value
+            let needsInterfaceSpecs = interfaceSpecsPowerState != next.externalPower
+                || Date().timeIntervalSince(interfaceSpecsReadAt) > 30
+            if needsInterfaceSpecs {
+                interfaceSpecs = await Task.detached(priority: .utility) { InterfaceSpecsReader.read() }.value
+                interfaceSpecsReadAt = Date()
+                interfaceSpecsPowerState = next.externalPower
+            }
             isMetricsRefreshing = false
             metricsFetchStartedAt = nil
             powerFlowView?.interfaceSpecs = interfaceSpecs
@@ -5615,6 +5655,9 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         var lastWidth: CGFloat = -1
         var didDeepRecover = false
         func tick() {
+            // 这个兜底只针对主层；详情/系统/剪贴板层的窗口不是主容器，
+            // 用主容器宽度判断会误判 0 宽并触发深度重建，把详情踢回主层。
+            guard touchBar.defaultItemIdentifiers == mainIdentifiers else { return }
             attempts += 1
             let elapsed = Double(attempts) * 0.02
             let width = mainContainerView?.window?.frame.width ?? 0
@@ -5904,6 +5947,8 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     @objc private func showDetails() {
         noteTouchBarInteraction()
         touchBar.principalItemIdentifier = nil
+        detailLayerActive = true
+        detailYieldBypassUntil = Date().addingTimeInterval(10)
         touchBar.defaultItemIdentifiers = detailIdentifiers
         presentTouchBar()
     }
@@ -5912,6 +5957,8 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         noteTouchBarInteraction()
         selectedUsageAccountKey = key
         touchBar.principalItemIdentifier = nil
+        detailLayerActive = true
+        detailYieldBypassUntil = Date().addingTimeInterval(10)
         touchBar.defaultItemIdentifiers = usageIdentifiers
         presentTouchBar()
     }
@@ -5919,6 +5966,8 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     @objc private func showClipboardHistory() {
         noteTouchBarInteraction()
         touchBar.principalItemIdentifier = nil
+        detailLayerActive = true
+        detailYieldBypassUntil = Date().addingTimeInterval(10)
         touchBar.defaultItemIdentifiers = clipboardIdentifiers
         presentTouchBar()
     }
@@ -5937,6 +5986,8 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         AppLog.write("show system detail")
         // metrics 每秒由计时器刷新；这里不再额外触发，避免切换瞬间与重排竞争。
         touchBar.principalItemIdentifier = nil
+        detailLayerActive = true
+        detailYieldBypassUntil = Date().addingTimeInterval(10)
         if touchBar.defaultItemIdentifiers != systemIdentifiers {
             touchBar.defaultItemIdentifiers = systemIdentifiers
         }
@@ -5974,6 +6025,8 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     /// 用户主动显示：清除“手动收起”，并在本次停留期间绕过让位规则，
     /// 方便在其他应用里临时使用模块（切应用后恢复自动让位）。
     @objc private func showMain() {
+        detailLayerActive = false
+        detailYieldBypassUntil = Date().addingTimeInterval(3)
         userHiddenMainBar = false
         manualYieldBypass = true
         yieldDismissed = false
@@ -6055,6 +6108,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     private func applyYieldState(_ yielded: Bool) {
         if yielded {
             guard !yieldDismissed else { return }
+            detailLayerActive = false
             yieldDismissed = true
             guard mainBarShown else { return }
             mainBarShown = false
@@ -6074,6 +6128,10 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     }
 
     private var lastPresentedAt = Date.distantPast
+    /// 当前是否停在某个详情层；输入建议出现时要把触控栏交还系统。
+    private var detailLayerActive = false
+    /// 点击模块进入详情是明确操作意图，这段时间内不让输入焦点抢走触控栏。
+    private var detailYieldBypassUntil = Date.distantPast
     private var lastMainShowRequestAt = Date.distantPast
 
     /// 前台的外来应用（不是我们自己）。
@@ -6087,7 +6145,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
     /// 用户主动点固定栏图标后，本次切换保持在最上层，直到应用切换或再次收起。
     private var shouldYieldTouchBar: Bool {
         guard let front = frontmostForeignApp else { return false }
-        if manualYieldBypass { return false }
+        if manualYieldBypass || detailLayerActive || Date() < detailYieldBypassUntil { return false }
         if TouchBarYieldPolicy.shouldYield(bundleID: front.bundleIdentifier) { return true }
         return TouchBarYieldPolicy.shouldYieldForTextFocus(
             isEditing: textFocusEditing,
@@ -6097,6 +6155,12 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
 
     private var systemOwnsTouchBar: Bool {
         UniversalControlWatchdog.isSystemOwnsTouchBar(sidecarState: sidecarStatus.state)
+    }
+
+    /// 当前呈现的那一层自己的窗口；详情层不能用主层容器判断。
+    private var activeTouchBarWindow: NSWindow? {
+        guard let identifier = touchBar.defaultItemIdentifiers.first?.rawValue else { return nil }
+        return touchBarItems[identifier]?.view?.window
     }
 
     /// 用户按 Fn、或在系统设置里选择 F1–F12 后，Touch Bar 会整条换成原生功能键。
@@ -6355,7 +6419,9 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         // 1 秒后确认一次，没挂上就再挂一次（只补一次，避免和系统对着抢）。
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self, self.mainBarShown, Date() >= self.mainBarHiddenUntil else { return }
-            guard self.mainContainerView?.window == nil else { return }
+            // 输入建议/系统界面占用触控栏时不要再抢，否则详情层会和键盘提示来回闪。
+            guard !self.shouldYieldTouchBar, !self.systemOwnsTouchBar else { return }
+            guard self.activeTouchBarWindow == nil else { return }
             AppLog.write("modal vanished after present; re-asserting once")
             _ = ControlStrip.present(self.touchBar, from: Item.controlStrip)
         }
@@ -7387,6 +7453,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.runMainRender()
         }
     }
+
+
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false

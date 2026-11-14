@@ -322,9 +322,29 @@ final class PowerFlowPanelView: NSView {
     @objc private func policyStripChanged(_ sender: NSSegmentedControl) {
         guard let policy = PowerFlowPolicy(rawValue: sender.selectedSegment) else { return }
         PowerFlowPolicyStore.current = policy
+        PowerFlowPolicyStore.manualOverride = true
+        PowerFlowPolicyStore.manualBaseDevicePercent = metrics.externalBatteryPercent
         ChargingLimitController.shared.update(policy: policy, metrics: metrics, userInitiated: true)
         AppLog.write("power policy selected=\(policy.title)")
         onPolicyChange?(policy)
+    }
+
+    /// NSMenu 的 item view 不会把点击传给子控件；由行视图显式转发。
+    func containsPolicyControl(at point: NSPoint) -> Bool {
+        policyStrip.frame.contains(point)
+    }
+
+    @discardableResult
+    func handlePolicyClick(at point: NSPoint) -> Bool {
+        guard policyStrip.frame.contains(point) else { return false }
+        let count = max(1, policyStrip.segmentCount)
+        let width = policyStrip.bounds.width / CGFloat(count)
+        guard width > 0 else { return false }
+        let localX = point.x - policyStrip.frame.minX
+        let index = max(0, min(count - 1, Int(localX / width)))
+        policyStrip.selectedSegment = index
+        policyStripChanged(policyStrip)
+        return true
     }
 
     /// 外部（菜单/自动规则）改动策略时，同步选择条。

@@ -822,7 +822,7 @@ final class PowerRunnerButton: NSButton {
 
     static func framesPerSecond(for watts: Double?) -> Double {
         guard let watts, watts.isFinite else { return 2 }
-        return min(14, max(2, 2 + watts / 6))
+        return min(8, max(2, 2 + watts / 8))
     }
 
     private func tick() {

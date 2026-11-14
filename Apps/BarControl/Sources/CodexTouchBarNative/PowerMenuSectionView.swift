@@ -50,14 +50,24 @@ final class PowerMenuSectionView: NSView {
 
     /// Menu item views are the reliable click target inside NSMenu; child
     /// buttons are not always reached, so dispatch from the row itself.
+    private var powerPanel: PowerFlowPanelView? { panel as? PowerFlowPanelView }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard bounds.contains(point) else { return nil }
+        if let powerPanel,
+           powerPanel.containsPolicyControl(at: convert(point, to: powerPanel)) {
+            return self
+        }
         if ecoRect.contains(point) || limitRect.contains(point) { return self }
         return super.hitTest(point)
     }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if let powerPanel,
+           powerPanel.handlePolicyClick(at: convert(point, to: powerPanel)) {
+            return
+        }
         if ecoRect.contains(point) {
             onEcoTap?()
             return

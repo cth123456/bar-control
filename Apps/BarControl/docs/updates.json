@@ -1,8 +1,15 @@
 {
   "schema": 1,
   "repository": "cth123456/bar-control",
-  "latest": "0.40.8",
+  "latest": "0.40.9",
   "releases": [
+    {
+      "version": "0.40.9",
+      "name": "功耗优化与详情切换修复",
+      "published_at": "2026-11-14T12:00:00Z",
+      "url": "https://github.com/cth123456/bar-control/releases/tag/v0.40.9",
+      "notes": "空闲功耗降到约 1.6% CPU；详情切换不再和输入法争抢；硬件设置直显；设置窗口显示 Dock 图标；手动电源策略会保持到自动规则触发；修复功率详情裁切。159 个测试通过。"
+    },
     {
       "version": "0.40.8",
       "name": "修复更新清单路径",

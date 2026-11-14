@@ -104,8 +104,24 @@ final class MenuDetailWindowController: NSObject, NSWindowDelegate {
         window.displayIfNeeded()
         // 层级切换时保持窗口位置，只有首次出现才居中。
         if !wasVisible { window.center() }
+        // 设置/详情窗口需要 Dock 图标，关闭最后一个窗口后再回到后台代理。
+        if NSApp.activationPolicy() != .regular {
+            NSApp.setActivationPolicy(.regular)
+        }
+        if let icon = NSImage(named: "AppIcon") {
+            NSApp.applicationIconImage = icon
+        }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closing = notification.object as? NSWindow, closing === window else { return }
+        DispatchQueue.main.async {
+            // 菜单栏/状态项也会出现在 NSApp.windows 里，不能据此判断。
+            // 设置窗口关闭即回到后台代理策略。
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     /// 窗口缩放时按新尺寸重排页面（两栏布局需要重新计算列宽）。

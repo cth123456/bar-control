@@ -27,10 +27,10 @@ final class PowerRunnerDisplayTests: XCTestCase {
     func testAnimationSpeedIsLinearAndCapped() {
         XCTAssertEqual(PowerRunnerButton.framesPerSecond(for: nil), 2)
         XCTAssertEqual(PowerRunnerButton.framesPerSecond(for: 0), 2)
-        XCTAssertEqual(PowerRunnerButton.framesPerSecond(for: 6), 3)
-        XCTAssertEqual(PowerRunnerButton.framesPerSecond(for: 42), 9)
-        XCTAssertEqual(PowerRunnerButton.framesPerSecond(for: 72), 14)
-        XCTAssertEqual(PowerRunnerButton.framesPerSecond(for: 100), 14, "封顶 14 fps")
+        XCTAssertEqual(PowerRunnerButton.framesPerSecond(for: 6), 2.75, accuracy: 0.0001)
+        XCTAssertEqual(PowerRunnerButton.framesPerSecond(for: 42), 7.25, accuracy: 0.0001)
+        XCTAssertEqual(PowerRunnerButton.framesPerSecond(for: 72), 8, accuracy: 0.0001)
+        XCTAssertEqual(PowerRunnerButton.framesPerSecond(for: 100), 8, "封顶 8 fps")
     }
 
     func testLocalComputerWattsExcludesExternalOutput() {

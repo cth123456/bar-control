@@ -409,16 +409,19 @@ private final class AccountCardButton: NSButton {
 final class AIActivityMarkView: NSView {
     var activeCount = 0 {
         didSet {
+            guard oldValue != activeCount else { return }
             refreshState()
         }
     }
     var taskState = "idle" {
         didSet {
+            guard oldValue != taskState else { return }
             refreshState()
         }
     }
     private var phase: CGFloat = 0
     private var animationTimer: Timer?
+    private static var badgeTextSizes: [String: NSSize] = [:]
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -474,8 +477,15 @@ final class AIActivityMarkView: NSView {
         color.setFill()
         NSBezierPath(ovalIn: badge).fill()
         let font = NSFont.monospacedDigitSystemFont(ofSize: text.count > 1 ? 4.1 : 5.2, weight: .bold)
+        let cacheKey = "\(text)|\(font.pointSize)"
+        let textSize: NSSize
+        if let cached = Self.badgeTextSizes[cacheKey] {
+            textSize = cached
+        } else {
+            textSize = (text as NSString).size(withAttributes: [.font: font])
+            Self.badgeTextSizes[cacheKey] = textSize
+        }
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
-        let textSize = (text as NSString).size(withAttributes: attributes)
         (text as NSString).draw(
             in: NSRect(
                 x: badge.midX - textSize.width / 2,
@@ -502,7 +512,7 @@ final class AIActivityMarkView: NSView {
             return
         }
         guard animationTimer == nil else { return }
-        let timer = Timer(timeInterval: 1.0 / 12.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.phase = (self.phase + 30).truncatingRemainder(dividingBy: 360)
