@@ -19,8 +19,10 @@ final class PowerFlowPanelLayoutTests: XCTestCase {
         let source = try XCTUnwrap(labels.first { $0.stringValue.hasPrefix("来源") })
         // 系统充电上限只在已启用时才有文字；该测试不依赖本机当前电源状态。
         let limit = labels.first { $0.stringValue.hasPrefix("系统充电上限") }
-        let chips = descendants(of: panel).compactMap { $0 as? NSVisualEffectView }
-            .filter { abs($0.frame.height - 26) < 0.5 && $0.frame.width > 20 && $0.frame.minY < 90 }
+        // 用类型名定位功率卡片，避免依赖不同 macOS 版本下的字体行高与坐标推断。
+        let chips = descendants(of: panel).filter {
+            !$0.isHidden && String(describing: type(of: $0)) == "PowerMetricChipView"
+        }
         XCTAssertFalse(chips.isEmpty)
 
         let policyRows = descendants(of: panel).filter {
