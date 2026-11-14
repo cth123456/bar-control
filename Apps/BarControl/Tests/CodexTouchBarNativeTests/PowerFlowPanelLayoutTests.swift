@@ -28,10 +28,11 @@ final class PowerFlowPanelLayoutTests: XCTestCase {
         let policyRows = descendants(of: panel).filter {
             !$0.isHidden && String(describing: type(of: $0)) == "PowerPolicySelector"
         }
-        let controllerLabels = descendants(of: panel).compactMap { $0 as? NSTextField }
-            .filter { $0.stringValue.contains("优先充电") || $0.stringValue.contains("负载均衡") || $0.stringValue.contains("优先放电") }
+        // 只查策略按钮本身：状态行文字可能包含“负载均衡”等策略名，不能据此判断控件还在。
+        let policyButtons = descendants(of: panel).compactMap { $0 as? NSButton }
+            .filter { ["优先充电", "负载均衡", "优先放电"].contains($0.title) }
         XCTAssertTrue(policyRows.isEmpty)
-        XCTAssertTrue(controllerLabels.isEmpty)
+        XCTAssertTrue(policyButtons.isEmpty)
         for chip in chips {
             XCTAssertFalse(source.frame.intersects(chip.frame), "来源文字与功率卡片重叠：\(chip.frame)")
             if let limit {
