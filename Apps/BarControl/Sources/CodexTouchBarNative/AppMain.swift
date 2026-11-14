@@ -2002,7 +2002,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
                 .init(title: "定时", value: "0/3 运行", symbol: "clock", tone: .secondary, action: .openServiceLogs)
             ], NSMenu()),
             ("随航与通用控制", "ipad.and.iphone", [
-                .init(title: "CTHPAD", value: "已连接", symbol: "ipad.landscape", tone: .green, action: .toggleSidecar)
+                .init(title: "iPad", value: "已连接", symbol: "ipad.landscape", tone: .green, action: .toggleSidecar)
             ], NSMenu()),
             ("AI coding", "curlybraces.square.fill", [
                 .init(title: "Codex Plus", value: "余 40%", symbol: "creditcard", progress: 0.4, clientID: "codex", action: .openUsage("codex")),
@@ -2046,8 +2046,8 @@ final class TouchBarController: NSObject, NSTouchBarDelegate, NSMenuDelegate, NS
         expandedMenu.addItem(NSMenuItem(title: "修复随航黑屏并重新连接", action: nil, keyEquivalent: ""))
         expandedItem.submenu = expandedMenu
         expandedSections.append(expandedItem, id: "sidecar",
-                                summary: "已连接 · CTHPAD",
-                                badges: [.init(title: "CTHPAD", value: "已连接", symbol: "ipad.landscape", tone: .green)])
+                                summary: "已连接 · iPad",
+                                badges: [.init(title: "iPad", value: "已连接", symbol: "ipad.landscape", tone: .green)])
 
         let width: CGFloat = 390
         let padding: CGFloat = 10

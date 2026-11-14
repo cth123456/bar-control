@@ -23,7 +23,7 @@ Codex 和供应商凭据始终留在 Mac。客户端不开放公网端口、不�
 
 ```sh
 xcodegen generate
-DEVELOPER_DIR=/Users/mac/Downloads/Xcode-beta.app/Contents/Developer \
+DEVELOPER_DIR=~/Downloads/Xcode-beta.app/Contents/Developer \
   xcodebuild -project BarControlRemote.xcodeproj \
   -scheme BarControlRemote \
   -destination 'generic/platform=iOS' \

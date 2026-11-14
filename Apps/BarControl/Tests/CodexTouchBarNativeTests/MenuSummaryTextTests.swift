@@ -23,10 +23,10 @@ final class MenuSummaryTextTests: XCTestCase {
     }
 
     func testSidecarUsesLiveConnectionInsteadOfOldOperationResult() {
-        XCTAssertEqual(MenuSummaryText.sidecar(state: "idle", message: "", connectedDevices: ["CTHPAD"]),
-                       "已连接 · CTHPAD")
-        XCTAssertEqual(MenuSummaryText.sidecar(state: "failure", message: "上次连接失败", connectedDevices: ["CTHPAD"]),
-                       "已连接 · CTHPAD")
+        XCTAssertEqual(MenuSummaryText.sidecar(state: "idle", message: "", connectedDevices: ["iPad"]),
+                       "已连接 · iPad")
+        XCTAssertEqual(MenuSummaryText.sidecar(state: "failure", message: "上次连接失败", connectedDevices: ["iPad"]),
+                       "已连接 · iPad")
         XCTAssertEqual(MenuSummaryText.sidecar(state: "success", message: "随航连接成功", connectedDevices: []),
                        "随航未连接")
         XCTAssertEqual(MenuSummaryText.sidecar(state: "connecting", message: "", connectedDevices: []),

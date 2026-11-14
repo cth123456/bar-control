@@ -53,7 +53,7 @@ final class MenuPairStylePreviewTests: XCTestCase {
         y -= 30
         icon("ipad.and.iphone", 17, y - 7)
         text("随航与通用控制", 39, y - 10, 12.5, .semibold, .white)
-        pill("CTHPAD 已连接", right: width - 17, .systemGreen)
+        pill("iPad 已连接", right: width - 17, .systemGreen)
         y -= 30
 
         func badge(_ text: String, right: CGFloat, y: CGFloat, color: NSColor) {

@@ -203,7 +203,7 @@ final class RemoteViewModel: ObservableObject {
     }
     @Published var filterProject: String?
     @Published var prompt = ""
-    @Published var workingDirectory = "/Users/mac/Documents/Obsidian Vault"
+    @Published var workingDirectory = ("~/Documents/Obsidian Vault" as NSString).expandingTildeInPath
     @Published var errorMessage: String?
     @Published private(set) var files: [RemoteFileInfo] = []
     @Published var selectedThreadID: String?
@@ -271,7 +271,7 @@ final class RemoteViewModel: ObservableObject {
                 messageCount: 8,
                 pinned: true,
                 projectFolder: "new-chat",
-                cwd: "/Users/mac/Documents/Codex/2026-08-22/new-chat",
+                cwd: ("~/Documents/Codex/2026-08-22/new-chat" as NSString).expandingTildeInPath,
                 model: "GPT-5.6-Sol"
             ),
             RemoteConversation(
@@ -281,7 +281,7 @@ final class RemoteViewModel: ObservableObject {
                 updatedAt: now.addingTimeInterval(-1_800),
                 messageCount: 12,
                 projectFolder: "new-chat",
-                cwd: "/Users/mac/Documents/Codex/2026-08-22/new-chat",
+                cwd: ("~/Documents/Codex/2026-08-22/new-chat" as NSString).expandingTildeInPath,
                 model: "DeepSeek V4 Flash"
             ),
             RemoteConversation(
@@ -291,7 +291,7 @@ final class RemoteViewModel: ObservableObject {
                 updatedAt: now.addingTimeInterval(-7_200),
                 messageCount: 5,
                 projectFolder: "Obsidian Vault",
-                cwd: "/Users/mac/Documents/Obsidian Vault",
+                cwd: ("~/Documents/Obsidian Vault" as NSString).expandingTildeInPath,
                 model: "GPT-5.6-Sol"
             )
         ]

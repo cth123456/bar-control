@@ -83,7 +83,7 @@ final class MenuSummaryCardsTests: XCTestCase {
                     .init(title: "定时", value: "1/3 运行", symbol: "clock", tone: .green)
                 ]),
                 ("随航与通用控制", "ipad.and.iphone", [
-                    .init(title: "CTHPAD", value: "● 已连接", symbol: "ipad.landscape", tone: .green)
+                    .init(title: "iPad", value: "● 已连接", symbol: "ipad.landscape", tone: .green)
                 ]),
                 ("AI coding", "curlybraces.square.fill", [
                     .init(title: "Codex Plus", value: "余 40%", symbol: "creditcard", progress: 0.4, clientID: "codex"),

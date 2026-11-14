@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROJECT_DIR=${0:A:h}
 BAR_CONTROL_DIR="$PROJECT_DIR/../BarControl"
-DEVELOPER_DIR=${DEVELOPER_DIR:-/Users/mac/Downloads/Xcode-beta.app/Contents/Developer}
+DEVELOPER_DIR=${DEVELOPER_DIR:-$HOME/Downloads/Xcode-beta.app/Contents/Developer}
 DERIVED_DIR=$(mktemp -d)
 SIGNING_DIR="$BAR_CONTROL_DIR/.signing"
 

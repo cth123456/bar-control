@@ -4,12 +4,12 @@
 
 - Source visual truth: `<本机参考图，未随仓库分发>`.
 - Source pixels: 1290 x 563.
-- Canonical expanded vector source retained for the measured-device state: `/Users/mac/Downloads/power_flow_ui_figma_precise.svg` (1290 x 681).
-- Rendered compact implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-compact-menu-material-light.png`.
+- Canonical expanded vector source retained for the measured-device state: `~/Downloads/power_flow_ui_figma_precise.svg` (1290 x 681).
+- Rendered compact implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-compact-menu-material-light.png`.
 - Implementation pixels: 780 x 341 at 2x density; logical AppKit size 390 x 170.21 points.
-- Normalized same-state comparison: `/Users/mac/Library/Logs/BarControl-compact-reference-vs-appkit.png`; the AppKit render was scaled to 1290 x 563 and placed beside the source.
-- Live telemetry implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-live-menu-material.png`.
-- Expanded measured-device regression render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-menu-material-light.png`.
+- Normalized same-state comparison: `~/Library/Logs/BarControl-compact-reference-vs-appkit.png`; the AppKit render was scaled to 1290 x 563 and placed beside the source.
+- Live telemetry implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-live-menu-material.png`.
+- Expanded measured-device regression render: `~/Library/Logs/CodexTouchBarNative-power-flow-menu-material-light.png`.
 - State: light appearance, adapter connected, no measured external USB power outputs. QA fixture uses the source values 67 W, 41.21 W, and 25.59 W; live evidence uses the Mac's current 20 W, 0.12 W, and 12.57 W telemetry.
 
 ## Findings
@@ -31,7 +31,7 @@
 1. P1 — the no-output state still showed placeholder iPad/display/more endpoints and kept the 1290 x 681 expanded width. Fix: removed placeholder outputs, made visibility depend only on measured wattage, and added the 1290 x 563 compact layout with dynamic view height.
 2. P2 — the first light render was too flat and nearly pure white on a light material. Fix: strengthened green/blue flow tints, reduced the flow sheen, and increased the soft gray shadow while preserving transparency.
 3. P2 — branch values were rounded to one decimal (`41.2 W`, `25.6 W`) while the source uses two. Fix: compact branches now render exactly two decimals.
-4. Post-fix evidence: `/Users/mac/Library/Logs/BarControl-compact-reference-vs-appkit.png` shows matching structure, proportions, state, and copy with only expected photographic blur remaining.
+4. Post-fix evidence: `~/Library/Logs/BarControl-compact-reference-vs-appkit.png` shows matching structure, proportions, state, and copy with only expected photographic blur remaining.
 
 ## Validation
 
@@ -45,14 +45,14 @@
 
 ## Expanded fan-out revision awaiting visual acceptance
 
-- Source visual truth: `/Users/mac/Downloads/IMG_4650.jpg`.
+- Source visual truth: `~/Downloads/IMG_4650.jpg`.
 - The first-level upper/lower flows now share one shadow and one outer rim. Their common origin segment is fill-only, so no horizontal splice line is drawn before the V split.
 - The former separately rimmed `hub` card is no longer rendered. The second-to-third-level fan uses one open shared root whose right side fades into the branch bodies.
 - Branch start and end widths are recomputed from both the current sibling count and relative wattage; the combined root height is capped at the 116 px outlet edge.
 - Actual AppKit evidence:
-  - one device: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`
-  - two devices: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-two-light.png`
-  - three devices: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png`
+  - one device: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`
+  - two devices: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-two-light.png`
+  - three devices: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png`
 - `swift build -c release`: passed after the revision.
 - `--flow-animation-preview`: passed and regenerated all three count states.
 - `--smoke-test`: passed, including ordering, total-height, count-response, and hidden-output assertions.
@@ -63,16 +63,16 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ## Three-level dynamic hierarchy revision
 
-- Source visual truth: `/Users/mac/Downloads/IMG_4665.jpg`.
+- Source visual truth: `~/Downloads/IMG_4665.jpg`.
 - Level 1 is the input/source card. Level 2 contains battery and whole-machine branches. Level 3 is created only from the whole-machine card and contains measured external devices.
 - Level-2 card heights are allocated from battery/system wattage with readable minimums; their battery/laptop icon sizes follow card height.
 - Level-3 ribbon root widths, endpoint widths, endpoint card heights, label sizes, and device icon sizes all respond to sibling count plus relative wattage.
 - High-contrast fixture: input 89 W, battery 3.47 W, system 84.0 W, outputs 58.6 / 3.90 / 26.7 W.
 - Actual AppKit evidence:
-  - light: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png`
-  - dark: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-dark.png`
-  - one-device regression: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`
-  - two-device regression: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-two-light.png`
+  - light: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png`
+  - dark: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-dark.png`
+  - one-device regression: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`
+  - two-device regression: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-two-light.png`
 - Small endpoint icons keep a 28 px design-space readability floor and level-2
   icons keep a 32 px floor, while both remain capped to avoid crowding.
 - `swift build -c release`, `--flow-animation-preview`, and `--smoke-test`: passed after the revision.
@@ -83,7 +83,7 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 - Cause: the moving color wash was capped at 58 design points even after dynamic hierarchy ribbons could exceed 200 points in cross-section.
 - Fix: sweep width now responds to both path length and the live ribbon's maximum start/end cross-section; third-level sweeps begin at the shared root's left edge instead of after the root.
-- High-contrast animated evidence: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-animation-00.png` through `-07.png`.
+- High-contrast animated evidence: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-animation-00.png` through `-07.png`.
 - Verified: the moving wash spans the complete vertical cross-section of the 58.6 W, 26.7 W, 3.90 W, 84.0 W, and 3.47 W ribbons at each sampled position.
 - `swift build -c release`, `--flow-animation-preview`, `--smoke-test`, and `git diff --check`: passed.
 - Follow-up gap fix: the former single transparent-ended wash was replaced by a
@@ -133,13 +133,13 @@ earlier status: implementation validated; visual acceptance and installation pen
   lighter compact style.
 - Latest actual program evidence:
   - dynamic light:
-    `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png`
+    `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png`
   - dynamic dark:
-    `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-dark.png`
+    `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-dark.png`
   - compact light:
-    `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-compact-menu-material-light.png`
+    `~/Library/Logs/CodexTouchBarNative-power-flow-compact-menu-material-light.png`
   - animation phases:
-    `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-animation-00.png`
+    `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-animation-00.png`
     through `-07.png`
 - `swift build -c release`, `--flow-animation-preview`, `--smoke-test`, and
   `git diff --check`: passed after the selective-rim revision.
@@ -178,7 +178,7 @@ earlier status: implementation validated; visual acceptance and installation pen
   `39b073e0666ffe7de390aee92edc62d317f68e9b53880dbef3a35c0439e4ca8a`.
 - Installed-binary `--flow-animation-preview`: passed; the approved
   single-device render was regenerated at
-  `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`.
+  `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`.
 - Running process path:
   `/Applications/Bar Control.app/Contents/MacOS/CodexTouchBarNative`.
 
@@ -186,11 +186,11 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Geometry reference: `/Users/mac/Downloads/IMG_4665.jpg` (782 x 416 pixels).
+- Geometry reference: `~/Downloads/IMG_4665.jpg` (782 x 416 pixels).
 - White liquid-glass reference: `<本机参考图，未随仓库分发>` (1290 x 563 pixels).
-- Dynamic implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
-- Zero-battery implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-battery-idle-menu-material-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
-- Single-output implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
+- Dynamic implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
+- Zero-battery implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-battery-idle-menu-material-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
+- Single-output implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
 - Full-view comparisons opened the relevant source and all implementation captures together. The dynamic geometry source and implementation differ by only 2 pixels in width and 4 pixels in height, so no additional density normalization was necessary for geometry review. The white-material source is a compact two-branch state and was used only for material, radius, and elevation review.
 - State: light appearance. The dynamic fixture is 89 W input, 3.47 W battery, 84.0 W system, and 58.6 / 3.90 / 26.7 W outputs. The zero-battery fixture is 85 W input, 0 W battery, 23.7 W system, and three outputs.
 
@@ -224,12 +224,12 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Source visual truth: `/Users/mac/Downloads/IMG_4665.jpg` (782 x 416 pixels).
+- Source visual truth: `~/Downloads/IMG_4665.jpg` (782 x 416 pixels).
 - Official behavior references: `https://apphousekitchen.com/aldente-overview/features/` and `https://github.com/AppHouseKitchen/AlDente-Battery_Care_and_Monitoring/releases`.
-- Underpowered implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
-- Low-positive-battery implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-compact-low-battery-menu-material-light.png` (780 x 341 pixels; 390 x 170.5 AppKit points at 2x).
-- Underpowered animation loop: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-underpowered-hierarchy-animation.gif` (780 x 412 pixels).
-- Low-positive-battery animation loop: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-compact-low-battery-animation.gif` (780 x 341 pixels).
+- Underpowered implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
+- Low-positive-battery implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-compact-low-battery-menu-material-light.png` (780 x 341 pixels; 390 x 170.5 AppKit points at 2x).
+- Underpowered animation loop: `~/Library/Logs/CodexTouchBarNative-power-flow-underpowered-hierarchy-animation.gif` (780 x 412 pixels).
+- Low-positive-battery animation loop: `~/Library/Logs/CodexTouchBarNative-power-flow-compact-low-battery-animation.gif` (780 x 341 pixels).
 - Full-view comparison opened the source, revised underpowered state, revised low-battery state, and an animated phase in one comparison input. Source and underpowered implementation differ by only 2 pixels in width and 4 pixels in height, so geometry review required no density normalization.
 - State A: weak adapter plus battery supplementation, 3.47 W battery + 84.00 W adapter feeding an 89.0 W computer, then 58.6 / 3.90 / 26.7 W outputs.
 - State B: charging, 89 W input splitting into 3.47 W battery and 84.00 W computer consumption.
@@ -274,12 +274,12 @@ earlier status: implementation validated; visual acceptance and installation pen
 ### Evidence
 
 - Light source visual truth: `<本机参考图，未随仓库分发>` (1290 x 563 pixels).
-- Dark hierarchy source visual truth: `/Users/mac/Downloads/IMG_4665.jpg` (782 x 416 pixels).
+- Dark hierarchy source visual truth: `~/Downloads/IMG_4665.jpg` (782 x 416 pixels).
 - Official behavior and appearance reference: `https://apphousekitchen.com/aldente-overview/features/`, including its charging and underpowered-charger screenshots.
-- Revised light implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
-- Revised dark implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-dark.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
-- Revised equal-scale single-device implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
-- Revised animation loops: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-underpowered-hierarchy-animation.gif` (780 x 412 pixels) and `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-compact-low-battery-animation.gif` (780 x 341 pixels).
+- Revised light implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
+- Revised dark implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-dark.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
+- Revised equal-scale single-device implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png` (780 x 412 pixels; 390 x 206 AppKit points at 2x).
+- Revised animation loops: `~/Library/Logs/CodexTouchBarNative-power-flow-underpowered-hierarchy-animation.gif` (780 x 412 pixels) and `~/Library/Logs/CodexTouchBarNative-power-flow-compact-low-battery-animation.gif` (780 x 341 pixels).
 - Full-view comparison placed both user references, both revised appearances, the single-device state, and an animation phase into one comparison input. IMG_4665 and the hierarchy implementation differ by only 2 pixels in width and 4 pixels in height, so no density normalization was required for geometry review. IMG_4664 was used for the light monochrome material, ink contrast, radius, and elevation treatment.
 
 ### Findings
@@ -315,10 +315,10 @@ earlier status: implementation validated; visual acceptance and installation pen
 ### Evidence
 
 - White source visual: `<本机参考图，未随仓库分发>`.
-- Dark hierarchy source visual: `/Users/mac/Downloads/IMG_4665.jpg`.
-- Revised single-device state: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-state-single-device.png`.
-- Revised low-battery compact state: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-state-compact-low-battery.png`.
-- Revised light/dark hierarchy states: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` and `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-dark.png`.
+- Dark hierarchy source visual: `~/Downloads/IMG_4665.jpg`.
+- Revised single-device state: `~/Library/Logs/CodexTouchBarNative-power-flow-state-single-device.png`.
+- Revised low-battery compact state: `~/Library/Logs/CodexTouchBarNative-power-flow-state-compact-low-battery.png`.
+- Revised light/dark hierarchy states: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` and `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-dark.png`.
 - Both source visuals and the corresponding revised implementation states were opened together for full-view comparison.
 
 ### Findings
@@ -347,9 +347,9 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Source visual truth: `<本机参考图，未随仓库分发>` and `/Users/mac/Downloads/IMG_4665.jpg`.
-- Revised single-device implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-state-single-device.png` (780 x 375 pixels).
-- Revised hierarchy implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
+- Source visual truth: `<本机参考图，未随仓库分发>` and `~/Downloads/IMG_4665.jpg`.
+- Revised single-device implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-state-single-device.png` (780 x 375 pixels).
+- Revised hierarchy implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
 - The two source/implementation state pairs were opened together in one full-view comparison input. Attachment edges and the 3.90 W branch remain clearly readable at this size, so a separate focused crop was not required.
 
 ### Findings
@@ -390,12 +390,12 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Geometry references: `<本机参考图，未随仓库分发>` and `/Users/mac/Downloads/IMG_4665.jpg`.
-- Deterministic internal-breakdown render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png`.
-- Dark-mode render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-dark.png`.
-- Revised single-device render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`.
-- Full 3.6-second animation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-animation.gif` and its 36 source PNG frames.
-- Live hardware render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png`.
+- Geometry references: `<本机参考图，未随仓库分发>` and `~/Downloads/IMG_4665.jpg`.
+- Deterministic internal-breakdown render: `~/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png`.
+- Dark-mode render: `~/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-dark.png`.
+- Revised single-device render: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`.
+- Full 3.6-second animation: `~/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-animation.gif` and its 36 source PNG frames.
+- Live hardware render: `~/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png`.
 - The two source images, the internal-breakdown render, the single-device render, and animation frames 00 and 35 were opened in one comparison input for final full-view review.
 
 ### Findings
@@ -429,10 +429,10 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Source visual truth: `/Users/mac/Downloads/IMG_4665.jpg` and `/Users/mac/Downloads/IMG_4650.jpg`.
-- Dynamic hierarchy implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png`.
-- Compact three-device implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png`.
-- Single-device regression: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`.
+- Source visual truth: `~/Downloads/IMG_4665.jpg` and `~/Downloads/IMG_4650.jpg`.
+- Dynamic hierarchy implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png`.
+- Compact three-device implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png`.
+- Single-device regression: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png`.
 - Both source/implementation pairs were opened together in one full-view comparison input for final review.
 
 ### Findings
@@ -462,9 +462,9 @@ earlier status: implementation validated; visual acceptance and installation pen
 ### Evidence
 
 - Single-device source context: `/var/folders/2j/1pfctdcd11z178vkxyw6lrw00000gn/T/codex-clipboard-762a5494-0bdd-4bd2-ad56-0bcc743adbb7.png` (780 x 412 pixels).
-- Single-device implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png` (780 x 412 pixels).
-- Multi-device hierarchy source: `/Users/mac/Downloads/IMG_4665.jpg` (782 x 416 pixels).
-- Multi-device implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
+- Single-device implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png` (780 x 412 pixels).
+- Multi-device hierarchy source: `~/Downloads/IMG_4665.jpg` (782 x 416 pixels).
+- Multi-device implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
 - Both source/implementation pairs were opened together in one full-view comparison input. The endpoint-card and symbol sizes are clearly readable at native output density, so a focused crop was not required.
 
 ### Findings
@@ -495,9 +495,9 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Reference hierarchy: `/Users/mac/Downloads/IMG_4650.jpg` and `/Users/mac/Downloads/IMG_4665.jpg`.
-- Single-endpoint implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png` (780 x 412 pixels).
-- Dynamic input implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
+- Reference hierarchy: `~/Downloads/IMG_4650.jpg` and `~/Downloads/IMG_4665.jpg`.
+- Single-endpoint implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-one-light.png` (780 x 412 pixels).
+- Dynamic input implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
 - The two reference/implementation pairs were opened together in one full-view comparison input. All attachment edges and device icons are readable at this scale, so a focused crop was not required.
 
 ### Findings
@@ -527,8 +527,8 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 - Installed version: Bar Control 0.16.5 (40).
 - Installed features include the equal-width first/second and second/third hierarchy, the larger sole endpoint, and measured third-level external/CPU/GPU/process power outputs.
-- Deterministic internal-power render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png`.
-- Live hardware render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png`; the current machine exposed measured GPU and billed-energy process channels while CPU power remained unavailable and was correctly hidden.
+- Deterministic internal-power render: `~/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png`.
+- Live hardware render: `~/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png`; the current machine exposed measured GPU and billed-energy process channels while CPU power remained unavailable and was correctly hidden.
 - Sub-0.1 W process labels use three decimals so a real nonzero measurement is not rendered as `0.00 W`.
 - Previous accepted installation retained at `backups/Bar Control-0.16.4-39-before-0.16.5.app`; signature verification passed and executable SHA-256 remains `6667c3620c131e6adc8b4425474f20b30dbef7107853dd44d08d5aed3659d8d5`.
 - Distribution and installed 0.16.5 executables match at SHA-256 `72c73072c658d2a2fc66b378f67fad7a0910a97df3d317c54ba6609cd698927b`.
@@ -540,10 +540,10 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Source hierarchy references: `/Users/mac/Downloads/IMG_4650.jpg` and `/Users/mac/Downloads/IMG_4665.jpg`.
-- Revised external-device render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
-- Revised deterministic internal-power render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png` (780 x 412 pixels).
-- Revised live hardware render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png` (780 x 412 pixels).
+- Source hierarchy references: `~/Downloads/IMG_4650.jpg` and `~/Downloads/IMG_4665.jpg`.
+- Revised external-device render: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
+- Revised deterministic internal-power render: `~/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png` (780 x 412 pixels).
+- Revised live hardware render: `~/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png` (780 x 412 pixels).
 - Both reference/implementation pairs were opened together in one full-view comparison input. Endpoint icons and attachment edges are clearly readable, so a focused crop was not required.
 
 ### Root-cause summary
@@ -585,10 +585,10 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Source references: `/Users/mac/Downloads/IMG_4650.jpg` and `/Users/mac/Downloads/IMG_4665.jpg`.
-- Revised external-device render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
-- Revised dynamic hierarchy render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
-- Revised live internal-power render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png` (780 x 412 pixels).
+- Source references: `~/Downloads/IMG_4650.jpg` and `~/Downloads/IMG_4665.jpg`.
+- Revised external-device render: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
+- Revised dynamic hierarchy render: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
+- Revised live internal-power render: `~/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png` (780 x 412 pixels).
 - Both source/implementation pairs were opened together in one full-view comparison input. The whole-Mac/output junction is readable at native output density, so a separate crop was not required.
 
 ### Findings and fixes
@@ -621,10 +621,10 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Source references: `/Users/mac/Downloads/IMG_4650.jpg` and `/Users/mac/Downloads/IMG_4665.jpg`.
-- Revised external-device render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
-- Revised dynamic hierarchy render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
-- Revised deterministic internal-power render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png` (780 x 412 pixels).
+- Source references: `~/Downloads/IMG_4650.jpg` and `~/Downloads/IMG_4665.jpg`.
+- Revised external-device render: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
+- Revised dynamic hierarchy render: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
+- Revised deterministic internal-power render: `~/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png` (780 x 412 pixels).
 - Both source/implementation pairs were opened together at full size. The card/ribbon gap, second-level icons, branch-root alignment, and endpoint spacing are readable without a crop.
 
 ### Root cause and correction
@@ -659,10 +659,10 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Source visual truth: `/Users/mac/Downloads/IMG_4665.jpg` (780 x 384 pixels after normalized comparison) and `/Users/mac/Downloads/IMG_4650.jpg`.
-- Revised dynamic implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
-- Revised internal-power implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png` (780 x 412 pixels).
-- Revised external-device implementation: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
+- Source visual truth: `~/Downloads/IMG_4665.jpg` (780 x 384 pixels after normalized comparison) and `~/Downloads/IMG_4650.jpg`.
+- Revised dynamic implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-dynamic-hierarchy-light.png` (780 x 412 pixels).
+- Revised internal-power implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png` (780 x 412 pixels).
+- Revised external-device implementation: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
 - Full-view reference and implementation were opened together. A focused right-column comparison was also opened from normalized 350 x 412 crops because endpoint copy and icon identity were too small to judge reliably in the full view.
 
 ### Findings and fixes
@@ -703,10 +703,10 @@ earlier status: implementation validated; visual acceptance and installation pen
 
 ### Evidence
 
-- Source hierarchy reference: `/Users/mac/Downloads/IMG_4665.jpg` (798 x 384 pixels).
-- Deterministic peer-hardware render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png` (780 x 412 pixels).
-- Live peer-hardware render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png` (780 x 412 pixels).
-- External-device regression render: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
+- Source hierarchy reference: `~/Downloads/IMG_4665.jpg` (798 x 384 pixels).
+- Deterministic peer-hardware render: `~/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png` (780 x 412 pixels).
+- Live peer-hardware render: `~/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png` (780 x 412 pixels).
+- External-device regression render: `~/Library/Logs/CodexTouchBarNative-power-flow-device-count-three-light.png` (780 x 412 pixels).
 - Reference, deterministic implementation, and live implementation were opened together at full size. Endpoint names and watt totals are readable without a focused crop, so no additional crop was required.
 
 ### Information-architecture correction
@@ -756,12 +756,12 @@ final result: passed
 
 ## 2026-08-25 read-only fan status
 
-- before screenshot: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-before-fan-summary-light.png`
-- deterministic after screenshot: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-light.png`
-- deterministic dark screenshot: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-dark.png`
-- stopped-fan screenshot: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png`
-- live AppleSMC screenshot: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png`
-- exact before/after comparison: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-fan-summary-qa-comparison.png`
+- before screenshot: `~/Library/Logs/CodexTouchBarNative-power-flow-before-fan-summary-light.png`
+- deterministic after screenshot: `~/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-light.png`
+- deterministic dark screenshot: `~/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-dark.png`
+- stopped-fan screenshot: `~/Library/Logs/CodexTouchBarNative-power-flow-internal-breakdown-light.png`
+- live AppleSMC screenshot: `~/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png`
+- exact before/after comparison: `~/Library/Logs/CodexTouchBarNative-power-flow-fan-summary-qa-comparison.png`
 - viewport: native AppKit menu view, 390 x 264 pt at 2x
 
 ### Implementation and safety
@@ -791,11 +791,11 @@ final result: passed
 
 ## 2026-08-25 synchronized local/external power summary
 
-- source visual truth path: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-before-summary-live-light.png` (installed 0.16.5 (40) graph immediately before this change), grounded by `/Users/mac/Downloads/IMG_4665.jpg`
-- implementation screenshot path: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-summary-live-light.png`
-- deterministic light screenshot: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-light.png`
-- deterministic dark screenshot: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-dark.png`
-- same-state comparison: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-summary-exact-qa-comparison.png`
+- source visual truth path: `~/Library/Logs/CodexTouchBarNative-power-flow-before-summary-live-light.png` (installed 0.16.5 (40) graph immediately before this change), grounded by `~/Downloads/IMG_4665.jpg`
+- implementation screenshot path: `~/Library/Logs/CodexTouchBarNative-power-flow-summary-live-light.png`
+- deterministic light screenshot: `~/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-light.png`
+- deterministic dark screenshot: `~/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-dark.png`
+- same-state comparison: `~/Library/Logs/CodexTouchBarNative-power-flow-summary-exact-qa-comparison.png`
 - viewport: native AppKit menu view, 390 x 264 pt
 - source pixels: 780 x 412 at 2x for the existing 390 x 206 graph
 - implementation pixels: 780 x 528 at 2x for the 390 x 264 graph-plus-summary view
@@ -838,11 +838,11 @@ final result: passed
 
 ## 2026-08-25 battery and GPU temperatures
 
-- source visual truth path: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-before-temperature-summary-light.png`
-- implementation screenshot path: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-light.png`
-- live sensor screenshot path: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png`
-- dark screenshot path: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-dark.png`
-- exact before/after comparison: `/Users/mac/Library/Logs/CodexTouchBarNative-power-flow-temperature-summary-qa-comparison.png`
+- source visual truth path: `~/Library/Logs/CodexTouchBarNative-power-flow-before-temperature-summary-light.png`
+- implementation screenshot path: `~/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-light.png`
+- live sensor screenshot path: `~/Library/Logs/CodexTouchBarNative-power-flow-live-hardware-breakdown-light.png`
+- dark screenshot path: `~/Library/Logs/CodexTouchBarNative-power-flow-local-external-summary-dark.png`
+- exact before/after comparison: `~/Library/Logs/CodexTouchBarNative-power-flow-temperature-summary-qa-comparison.png`
 - viewport: native AppKit menu view, graph 390 x 206 pt plus 88 pt summary footer
 - source pixels: 780 x 528 at 2x; implementation pixels: 780 x 588 at 2x
 - density normalization: both captures use the same 390 pt width and 2x density; top edges are aligned so the unchanged 390 x 206 pt graph compares 1:1
