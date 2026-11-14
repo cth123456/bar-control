@@ -18,9 +18,10 @@ final class InlineMenuSectionsTests: XCTestCase {
         let header = try XCTUnwrap(item.view)
         header.frame.size.width = 550
         header.layoutSubtreeIfNeeded()
-        if #available(macOS 26.0, *) {
-            XCTAssertTrue(descendants(header).compactMap { $0 as? NSGlassEffectView }.isEmpty)
-        }
+        // 用类名字符串判断，避免旧 SDK（CI 的 macOS 15 runner）没有 NSGlassEffectView 符号而编译失败。
+        XCTAssertFalse(descendants(header).contains {
+            String(describing: type(of: $0)) == "NSGlassEffectView"
+        })
         XCTAssertTrue(descendants(header).compactMap { $0 as? NSVisualEffectView }.isEmpty)
         let button = try XCTUnwrap(descendants(header).compactMap { $0 as? NSButton }.first)
         button.performClick(nil)
