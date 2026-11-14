@@ -8,7 +8,10 @@
       "name": "功耗优化与详情切换修复",
       "published_at": "2026-11-14T12:00:00Z",
       "url": "https://github.com/cth123456/bar-control/releases/tag/v0.40.9",
-      "notes": "空闲功耗降到约 1.6% CPU；详情切换不再和输入法争抢；硬件设置直显；设置窗口显示 Dock 图标；手动电源策略会保持到自动规则触发；修复功率详情裁切。159 个测试通过。"
+      "notes": "空闲功耗降到约 1.6% CPU；详情切换不再和输入法争抢；硬件设置直显；设置窗口显示 Dock 图标；手动电源策略会保持到自动规则触发；修复功率详情裁切。159 个测试通过。",
+      "asset_url": "https://github.com/cth123456/bar-control/releases/download/v0.40.9/BarControl-0.40.9.zip",
+      "sha256": "3b87d35cd3a7a3f97fa4a2e9972166a6e8f39b165dd00eaed68522fc743056a1",
+      "asset_size": 3999182
     },
     {
       "version": "0.40.8",
