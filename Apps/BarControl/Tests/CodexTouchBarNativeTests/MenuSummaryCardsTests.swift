@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 @testable import CodexTouchBarNative
 
+@MainActor
 final class MenuSummaryCardsTests: XCTestCase {
     @MainActor private func descendants(_ view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + descendants($0) }
@@ -47,7 +48,7 @@ final class MenuSummaryCardsTests: XCTestCase {
             .init(title: "", value: "8 条", symbol: "doc.on.clipboard", action: .openClipboard)
         ])
         let header = try XCTUnwrap(root.view)
-        let badge = try XCTUnwrap(descendants(of: header).compactMap { $0 as? MenuSummaryBadgeView }.first)
+        let badge = try XCTUnwrap(allDescendants(of: header).compactMap { $0 as? MenuSummaryBadgeView }.first)
         let point = badge.convert(NSPoint(x: badge.bounds.midX, y: badge.bounds.midY), to: header)
         let hit = try XCTUnwrap(header.hitTest(point))
         XCTAssertTrue(hit === badge || hit.isDescendant(of: badge))
@@ -122,9 +123,9 @@ final class MenuSummaryCardsTests: XCTestCase {
                 canvas.addSubview(view)
                 view.frame = NSRect(x: 0, y: y, width: 390, height: view.frame.height)
                 view.layoutSubtreeIfNeeded()
-                let cards = descendants(of: view).compactMap { $0 as? MenuSummaryBadgeView }
+                let cards = allDescendants(of: view).compactMap { $0 as? MenuSummaryBadgeView }
                 XCTAssertEqual(cards.count, count)
-                let title = descendants(of: view).compactMap { $0 as? NSTextField }
+                let title = allDescendants(of: view).compactMap { $0 as? NSTextField }
                     .first { $0.stringValue.replacingOccurrences(of: "\n", with: "") == titleText }
                 if let title {
                     XCTAssertFalse(title.stringValue.isEmpty)
@@ -140,7 +141,7 @@ final class MenuSummaryCardsTests: XCTestCase {
                         XCTAssertFalse(visible[first].frame.intersects(visible[second].frame))
                     }
                 }
-                let overflow = descendants(of: view).compactMap { $0 as? MenuSummaryOverflowView }.first
+                let overflow = allDescendants(of: view).compactMap { $0 as? MenuSummaryOverflowView }.first
                 XCTAssertEqual(overflow != nil, cards.contains(where: \.isHidden))
                 y += view.frame.height + 5
             }
@@ -157,8 +158,8 @@ final class MenuSummaryCardsTests: XCTestCase {
         }
     }
 
-    private func descendants(of view: NSView) -> [NSView] {
-        view.subviews.flatMap { [$0] + descendants(of: $0) }
+    @MainActor private func allDescendants(of view: NSView) -> [NSView] {
+        view.subviews.flatMap { [$0] + allDescendants(of: $0) }
     }
 }
 

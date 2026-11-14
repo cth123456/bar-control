@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 @testable import CodexTouchBarNative
 
+@MainActor
 final class PowerFlowPanelLayoutTests: XCTestCase {
     @MainActor
     func testRemovedPolicyControlLeavesNoOverlappingFooterRows() throws {
@@ -51,7 +52,7 @@ final class PowerFlowPanelLayoutTests: XCTestCase {
         try png.write(to: URL(fileURLWithPath: "/tmp/barcontrol-power-panel-footer.png"))
     }
 
-    private func descendants(of view: NSView) -> [NSView] {
+    @MainActor private func descendants(of view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + descendants(of: $0) }
     }
 }

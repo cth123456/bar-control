@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 @testable import CodexTouchBarNative
 
+@MainActor
 final class QuotaInteractionTests: XCTestCase {
     @MainActor
     func testDraggingBrowsesBothDirectionsWithoutOpeningAnAccount() throws {

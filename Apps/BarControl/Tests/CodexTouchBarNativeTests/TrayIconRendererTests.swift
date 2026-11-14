@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 @testable import CodexTouchBarNative
 
+@MainActor
 final class TrayIconRendererTests: XCTestCase {
     @MainActor
     func testRenderedIconIsAnIndependentBitmapWithVisiblePixels() throws {

@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 @testable import CodexTouchBarNative
 
+@MainActor
 final class InlineMenuSectionsTests: XCTestCase {
     @MainActor private func descendants(_ view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + descendants($0) }

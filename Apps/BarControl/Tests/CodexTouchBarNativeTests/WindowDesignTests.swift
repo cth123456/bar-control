@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 @testable import CodexTouchBarNative
 
+@MainActor
 final class WindowDesignTests: XCTestCase {
     @MainActor
     func testSharedWindowComponentsRenderInBothAppearances() throws {

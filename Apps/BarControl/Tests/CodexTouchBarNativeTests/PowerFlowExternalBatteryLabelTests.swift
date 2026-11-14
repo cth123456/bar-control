@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 @testable import CodexTouchBarNative
 
+@MainActor
 final class PowerFlowExternalBatteryLabelTests: XCTestCase {
     @MainActor
     func testIPadPercentageAndUnknownState() {
